@@ -1,5 +1,5 @@
-use revelations::config::Config;
-use revelations::evaluator::Evaluator;
+use revelation::config::Config;
+use revelation::evaluator::Evaluator;
 
 fn main() {
     let config = Config::load();

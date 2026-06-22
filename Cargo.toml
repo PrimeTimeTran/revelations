@@ -1,14 +1,14 @@
 [package]
-name = "revelations"
-description = "Revelations helps developers discover hidden patterns in code."
+name = "revelation"
+description = "Revelation helps developers discover hidden patterns in code."
 edition = "2024"
 version = "0.0.1"
 authors = ["Loi Tran"]
 license = "MIT OR Apache-2.0"
 
-documentation = "https://docs.rs/revelations"
+documentation = "https://docs.rs/revelation"
 homepage = "https://kb-blog-primetimetran.vercel.app/"
-repository = "https://github.com/primetimetran/revelations"
+repository = "https://github.com/primetimetran/revelation"
 keywords = ["virtualization","visualization","filesystem", "development-tools", "os"]
 categories = ["virtualization","visualization","filesystem", "development-tools", "os"]
 
@@ -25,7 +25,7 @@ regex-syntax = { version = "0.8", features = ["std"] }
 swc_core = { version = "70.0.0", features = ["common", "ecma_parser", "ecma_visit", "ecma_ast"] }
 regex = "1.12.4"
 
-# OPTION 3: 
+# OPTION 3:
 
 # OPTION 2: "Crate-Specific" Semantic Versioning
 # swc_common = { version = "0.33" }
