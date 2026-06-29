@@ -119,12 +119,10 @@ impl Config {
             return format!("{}fn {}(){}", fn_indent, name, ret);
         }
 
-        // CASE 2: ONLY self → inline
         if params.len() == 1 && params[0].trim() == "self" {
             return format!("{}fn {}(self){}", fn_indent, name, ret);
         }
 
-        // CASE 3: normal multi-line params
         let param_indent = format!("{}{}", fn_indent, INDENT_STEP);
 
         let params = params

@@ -23,7 +23,6 @@ impl Analyzer for TypeScriptAnalyzer {
         let ctx = ParserContext {
             cm: Default::default(),
         };
-
         ctx.with_parser("input.ts", source, |parser| {
             let module = parser
                 .parse_module()
@@ -85,22 +84,22 @@ impl Visit for TsVisitor<'_> {
                 name,
                 kind: SymbolKind::Function(FunctionKind::Free),
                 visibility,
+                children: Vec::new(),
                 params,
                 return_type,
             });
         }
     }
-
     fn visit_class_decl(&mut self, c: &ClassDecl) {
         self.symbols.push(Symbol {
             name: c.ident.sym.to_string(),
             kind: SymbolKind::Type(TypeKind::Class),
             visibility: Visibility::Public,
             params: None,
+            children: Vec::new(),
             return_type: None,
         });
     }
-
     fn visit_var_declarator(&mut self, v: &VarDeclarator) {
         let name = match &v.name {
             Pat::Ident(i) => i.id.sym.to_string(),
@@ -112,6 +111,7 @@ impl Visit for TsVisitor<'_> {
             kind: SymbolKind::Variable(VariableKind::Let),
             visibility: Visibility::Public,
             params: None,
+            children: Vec::new(),
             return_type: None,
         });
     }

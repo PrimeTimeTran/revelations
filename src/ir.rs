@@ -18,6 +18,7 @@ pub enum FunctionKind {
     Method,
     Associated,
     Lambda,
+    TraitMethod,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -37,6 +38,7 @@ pub enum TypeKind {
     Trait,
     Interface,
     TypeAlias,
+    Impl,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +56,7 @@ pub struct Symbol {
     pub visibility: Visibility,
     pub params: Option<Vec<(String, String)>>,
     pub return_type: Option<String>,
+    pub children: Vec<Symbol>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Signature {
@@ -66,4 +69,8 @@ pub enum SymbolKind {
     Function(FunctionKind),
     Variable(VariableKind),
     Type(TypeKind),
+    Implementation {
+        target_type: String,
+        trait_name: Option<String>,
+    },
 }

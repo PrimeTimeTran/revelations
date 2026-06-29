@@ -2,8 +2,8 @@ use quote::ToTokens;
 use std::{collections::BTreeMap, path::Path};
 
 use syn::{
-    Fields, File, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemStruct, Pat, ReturnType, Signature,
-    Type,
+    Fields, File, FnArg, ImplItem, Item, ItemEnum, ItemFn, ItemStruct, ItemTrait, Pat, ReturnType,
+    Signature, TraitItem, Type,
 };
 
 use crate::{
@@ -46,14 +46,24 @@ pub fn render_sym_item<'a>(
                 .trim_end()
                 .to_string(),
         )),
-
+        // Item::Impl(i) => Some((
+        //     "IMPLEMENTATIONS".to_string(),
+        //     render_impl(i, &config, sym_indent),
+        // )),
         Item::Fn(f) => Some((
             "FUNCTIONS".to_string(),
             render_signature(RenderSig::Function(f), &config, sym_indent),
         )),
+
         Item::Enum(e) => Some((
             "ENUMS".to_string(),
             render_enum(e, &config, sym_indent.to_string())
+                .trim_end()
+                .to_string(),
+        )),
+        Item::Trait(t) => Some((
+            "TRAITS".to_string(),
+            render_trait(t, &config, sym_indent.to_string())
                 .trim_end()
                 .to_string(),
         )),
@@ -132,6 +142,45 @@ pub fn render_struct(s: &ItemStruct, config: &Config, indent: String, items: &[I
 
     output
 }
+pub fn render_impl(i: &syn::ItemImpl, config: &Config, indent: &str) -> String {
+    let mark = &config.format.comment_mark;
+    let content_indent = format!("{}{}", indent, INDENT_STEP);
+
+    let self_ty = i.self_ty.to_token_stream().to_string();
+    let trait_name = i
+        .trait_
+        .as_ref()
+        .map(|(_, path, _)| path.to_token_stream().to_string());
+
+    let header = if let Some(t) = trait_name {
+        format!("impl {} for {}", t, self_ty)
+    } else {
+        format!("impl {}", self_ty)
+    };
+
+    let mut output = format!("{}{} {{\n", indent, header);
+
+    // Filter methods using the same rendering logic as render_struct
+    let mut methods = Vec::new();
+    for item in &i.items {
+        if let syn::ImplItem::Fn(m) = item {
+            methods.push(render_signature(
+                RenderSig::Method(&m.sig, &self_ty),
+                config,
+                &content_indent,
+            ));
+        }
+    }
+
+    if !methods.is_empty() {
+        output.push_str(&format!("{}{} METHODS:\n", content_indent, mark));
+        output.push_str(&methods.join("\n"));
+        output.push_str("\n");
+    }
+
+    output.push_str(&format!("{}}}", indent));
+    output
+}
 pub fn render_enum(e: &ItemEnum, config: &Config, indent: String) -> String {
     let name = e.ident.to_string();
     let policy = &config.render_policy;
@@ -188,6 +237,27 @@ pub fn render_enum_payload(fields: &Fields, policy: &RenderPolicy) -> Vec<String
         Fields::Unit => vec![],
     }
 }
+fn render_trait(t: &ItemTrait, config: &Config, indent: String) -> String {
+    let mut output = format!("{}trait {}", indent, t.ident);
+
+    for item in &t.items {
+        match item {
+            TraitItem::Fn(f) => {
+                // Reuse your signature rendering logic
+                let sig = render_signature(RenderSig::Method(&f.sig, &indent), config, &indent);
+                output.push_str(&format!("\n{}", sig));
+            }
+            TraitItem::Type(ty) => {
+                output.push_str(&format!("\n  {}type {};", indent, ty.ident));
+            }
+            _ => {}
+        }
+    }
+
+    output.push_str("\n{}");
+    output
+}
+
 pub fn render_indent(level: usize) -> String {
     INDENT_STEP.repeat(level)
 }
@@ -210,8 +280,46 @@ pub fn render_signature(kind: RenderSig, config: &Config, scope: &str) -> String
                 &scope,
             )
         }
+        // RenderSig::Method(sig, struct_scope) => {
+        //     let scope = config.method_scope(struct_scope);
+
+        //     config.format_signature(
+        //         &sig.ident.to_string(),
+        //         &extract_params(sig, config),
+        //         extract_ret(sig),
+        //         &scope,
+        //     )
+        // }
+        RenderSig::TraitFn(sig, struct_scope) => {
+            let scope = config.method_scope(struct_scope);
+
+            config.format_signature(
+                &sig.ident.to_string(),
+                &extract_params(sig, config),
+                extract_ret(sig),
+                &scope,
+            )
+        }
     }
 }
+// pub fn render_signature(kind: RenderSig, config: &Config, scope: &str) -> String {
+//     match kind {
+//         RenderSig::Function(f) => format_sig_inner(&f.sig, config, scope),
+//         RenderSig::Method(sig, struct_scope) | RenderSig::TraitFn(sig, struct_scope) => {
+//             let actual_scope = config.method_scope(struct_scope);
+//             format_sig_inner(sig, config, &actual_scope)
+//         }
+//     }
+// }
+
+// fn format_sig_inner(sig: &syn::Signature, config: &Config, scope: &str) -> String {
+//     config.format_signature(
+//         &sig.ident.to_string(),
+//         &extract_params(sig, config),
+//         extract_ret(sig),
+//         scope,
+//     )
+// }
 pub fn render_output(output: &str, _config: &Config) -> String {
     let mut result = output.to_string();
 
@@ -280,4 +388,5 @@ pub fn extract_ret(sig: &Signature) -> Option<String> {
 pub enum RenderSig<'a> {
     Function(&'a ItemFn),
     Method(&'a Signature, &'a str),
+    TraitFn(&'a Signature, &'a str),
 }
