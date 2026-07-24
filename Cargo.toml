@@ -14,17 +14,14 @@ categories = ["virtualization","visualization","filesystem", "development-tools"
 
 [dependencies]
 
-walkdir = "2"
-quote = "1.0.45"
-prettyplease = "0.2"
-
-clap = { version = "4", features = ["derive"] }
-syn = { version = "2", features = ["full", "visit"] }
-regex-syntax = { version = "0.8", features = ["std"] }
-
-swc_core = { version = "70.0.0", features = ["common", "ecma_parser", "ecma_visit", "ecma_ast"] }
-regex = "1.12.4"
-
+syn = { workspace = true }
+clap = { workspace = true }
+quote = { workspace = true }
+regex = { workspace = true }
+walkdir = { workspace = true }
+swc_core = { workspace = true }
+prettyplease = { workspace = true }
+regex-syntax = { workspace = true }
 # OPTION 3:
 
 # OPTION 2: "Crate-Specific" Semantic Versioning
