@@ -14,14 +14,14 @@ categories = ["virtualization","visualization","filesystem", "development-tools"
 
 [dependencies]
 
-syn = { workspace = true }
-clap = { workspace = true }
-quote = { workspace = true }
-regex = { workspace = true }
-walkdir = { workspace = true }
-swc_core = { workspace = true }
-prettyplease = { workspace = true }
-regex-syntax = { workspace = true }
+syn.workspace = true
+clap.workspace = true
+quote.workspace = true
+regex.workspace = true
+walkdir.workspace = true
+swc_core.workspace = true
+prettyplease.workspace = true
+regex-syntax.workspace = true
 # OPTION 3:
 
 # OPTION 2: "Crate-Specific" Semantic Versioning
