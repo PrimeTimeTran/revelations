@@ -139,27 +139,22 @@ pub fn render_struct(s: &ItemStruct, config: &Config, indent: String, items: &[I
             output.push_str("\n\n");
         }
     }
-
     output
 }
 pub fn render_impl(i: &syn::ItemImpl, config: &Config, indent: &str) -> String {
     let mark = &config.format.comment_mark;
     let content_indent = format!("{}{}", indent, INDENT_STEP);
-
     let self_ty = i.self_ty.to_token_stream().to_string();
     let trait_name = i
         .trait_
         .as_ref()
-        .map(|(_, path, _)| path.to_token_stream().to_string());
-
+        .map(|(path, _)| path.to_token_stream().to_string());
     let header = if let Some(t) = trait_name {
         format!("impl {} for {}", t, self_ty)
     } else {
         format!("impl {}", self_ty)
     };
-
     let mut output = format!("{}{} {{\n", indent, header);
-
     // Filter methods using the same rendering logic as render_struct
     let mut methods = Vec::new();
     for item in &i.items {
@@ -171,13 +166,11 @@ pub fn render_impl(i: &syn::ItemImpl, config: &Config, indent: &str) -> String {
             ));
         }
     }
-
     if !methods.is_empty() {
         output.push_str(&format!("{}{} METHODS:\n", content_indent, mark));
         output.push_str(&methods.join("\n"));
         output.push_str("\n");
     }
-
     output.push_str(&format!("{}}}", indent));
     output
 }
@@ -185,11 +178,9 @@ pub fn render_enum(e: &ItemEnum, config: &Config, indent: String) -> String {
     let name = e.ident.to_string();
     let policy = &config.render_policy;
     let format = &config.format;
-
     if let ViewMode::System = policy.mode {
         return format!("{}enum {}", indent, name);
     }
-
     let variants: Vec<String> = e
         .variants
         .iter()
@@ -212,7 +203,6 @@ pub fn render_enum_payload(fields: &Fields, policy: &RenderPolicy) -> Vec<String
     if !policy.include_nested_types {
         return vec![];
     }
-
     match fields {
         Fields::Named(named) => named
             .named
@@ -239,7 +229,6 @@ pub fn render_enum_payload(fields: &Fields, policy: &RenderPolicy) -> Vec<String
 }
 fn render_trait(t: &ItemTrait, config: &Config, indent: String) -> String {
     let mut output = format!("{}trait {}", indent, t.ident);
-
     for item in &t.items {
         match item {
             TraitItem::Fn(f) => {
@@ -253,7 +242,6 @@ fn render_trait(t: &ItemTrait, config: &Config, indent: String) -> String {
             _ => {}
         }
     }
-
     output.push_str("\n{}");
     output
 }
@@ -322,13 +310,11 @@ pub fn render_signature(kind: RenderSig, config: &Config, scope: &str) -> String
 // }
 pub fn render_output(output: &str, _config: &Config) -> String {
     let mut result = output.to_string();
-
     result = result
         .lines()
         .map(|l| l.trim_end())
         .collect::<Vec<_>>()
         .join("\n");
-
     result.push('\n');
     result
 }
@@ -359,7 +345,6 @@ pub fn extract_params(sig: &Signature, config: &Config) -> Vec<String> {
     if !policy.include_params {
         return vec![];
     }
-
     sig.inputs
         .iter()
         .map(|arg| match arg {

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+#[derive(Debug)]
 pub struct RenderedFile {
     pub path: PathBuf,
     pub header: String,

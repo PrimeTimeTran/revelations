@@ -8,6 +8,120 @@ use crate::{
     ui::INDENT_STEP,
 };
 
+use crate::analyzer::*;
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub analysis_root: PathBuf,
+    pub output_name: String,
+    pub output_path: PathBuf,
+    pub extract: ExtractConfig,
+    pub render_policy: RenderPolicy,
+    pub layout: DenseConfig,
+    pub format: FormatConfig,
+}
+
+impl Config {
+    pub fn new(
+        analysis_root: PathBuf,
+        output_name: impl Into<String>,
+        output_path: PathBuf,
+    ) -> Self {
+        Self {
+            analysis_root,
+            output_name: output_name.into(),
+            output_path,
+            ..Self::default()
+        }
+    }
+
+    pub fn analyzer(root: PathBuf) -> Self {
+        Self {
+            analysis_root: root,
+            output_name: "analysis".into(),
+            output_path: PathBuf::from("analysis.md"),
+            ..Self::default()
+        }
+    }
+}
+
+impl Config {
+    pub fn load() -> Self {
+        let args = CliArgs::parse();
+        let mut config = Self::default();
+
+        if let Some(name) = args.name {
+            config.output_name = name;
+        }
+        if let Some(root) = args.root {
+            config.analysis_root = root;
+        }
+        if let Some(path) = args.path {
+            config.output_path = path;
+        }
+
+        config
+    }
+
+    pub fn method_scope(&self, struct_scope: &str) -> String {
+        format!("{}{}", struct_scope, INDENT_STEP)
+    }
+    pub fn format_signature(
+        &self,
+        name: &str,
+        params: &[String],
+        ret: Option<String>,
+        fn_indent: &str,
+    ) -> String {
+        let ret = ret
+            .map(|t| format!(" -> {}", format_type(&t)))
+            .unwrap_or_default();
+
+        if params.is_empty() {
+            return format!("{}fn {}(){}", fn_indent, name, ret);
+        }
+
+        if params.len() == 1 && params[0].trim() == "self" {
+            return format!("{}fn {}(self){}", fn_indent, name, ret);
+        }
+
+        let param_indent = format!("{}{}", fn_indent, INDENT_STEP);
+
+        let params = params
+            .iter()
+            .map(|p| format!("{}{}", param_indent, format_type(p)))
+            .collect::<Vec<_>>()
+            .join(",\n");
+
+        format!(
+            "{}fn {}(\n{}\n{}){}",
+            fn_indent, name, params, fn_indent, ret
+        )
+    }
+}
+
+impl Config {
+    pub fn from_analyze(request: &Analyze) -> Self {
+        let path = match &request.target {
+            AnalysisTarget::File(path) => path,
+            AnalysisTarget::Workspace(path) => path,
+        };
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let analysis_root = match &request.target {
+            AnalysisTarget::File(_) => canonical.parent().unwrap_or(&canonical).to_path_buf(),
+            AnalysisTarget::Workspace(_) => canonical,
+        };
+        Self {
+            analysis_root,
+            output_name: "eval-daemon.md".into(),
+            output_path: PathBuf::from("./"),
+            extract: ExtractConfig::default(),
+            render_policy: RenderPolicy::default(),
+            layout: DenseConfig::default(),
+            format: FormatConfig::default(),
+        }
+    }
+}
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct CliArgs {
@@ -72,72 +186,6 @@ impl Default for ExtractConfig {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub analysis_root: PathBuf,
-    pub output_name: String,
-    pub output_path: PathBuf,
-    pub extract: ExtractConfig,
-    pub format: FormatConfig,
-    pub render_policy: RenderPolicy,
-    pub layout: DenseConfig,
-}
-
-impl Config {
-    pub fn load() -> Self {
-        let args = CliArgs::parse();
-        let mut config = Self::default();
-
-        if let Some(name) = args.name {
-            config.output_name = name;
-        }
-        if let Some(root) = args.root {
-            config.analysis_root = root;
-        }
-        if let Some(path) = args.path {
-            config.output_path = path;
-        }
-
-        config
-    }
-
-    pub fn method_scope(&self, struct_scope: &str) -> String {
-        format!("{}{}", struct_scope, INDENT_STEP)
-    }
-    pub fn format_signature(
-        &self,
-        name: &str,
-        params: &[String],
-        ret: Option<String>,
-        fn_indent: &str,
-    ) -> String {
-        let ret = ret
-            .map(|t| format!(" -> {}", format_type(&t)))
-            .unwrap_or_default();
-
-        if params.is_empty() {
-            return format!("{}fn {}(){}", fn_indent, name, ret);
-        }
-
-        if params.len() == 1 && params[0].trim() == "self" {
-            return format!("{}fn {}(self){}", fn_indent, name, ret);
-        }
-
-        let param_indent = format!("{}{}", fn_indent, INDENT_STEP);
-
-        let params = params
-            .iter()
-            .map(|p| format!("{}{}", param_indent, format_type(p)))
-            .collect::<Vec<_>>()
-            .join(",\n");
-
-        format!(
-            "{}fn {}(\n{}\n{}){}",
-            fn_indent, name, params, fn_indent, ret
-        )
-    }
-}
-
 impl Default for RenderPolicy {
     fn default() -> Self {
         Self {
@@ -152,7 +200,8 @@ impl Default for RenderPolicy {
 
 impl Default for Config {
     fn default() -> Self {
-        let root = PathBuf::from("./crates/llvm").canonicalize().unwrap();
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = current_dir.canonicalize().unwrap_or(current_dir);
 
         Self {
             analysis_root: root,

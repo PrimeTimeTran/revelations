@@ -11,6 +11,13 @@ pub struct RustFileRenderer {
     pub config: Config,
 }
 
+impl RustFileRenderer {
+    // Concrete method returning the exact AST type you need for your daemon/LSP
+    pub fn parse_ast(&self, source: &str) -> syn::File {
+        syn::parse_file(source).unwrap_or_else(|_| syn::parse_str("").unwrap())
+    }
+}
+
 impl FileRenderer for RustFileRenderer {
     fn render(&self, path: &Path, source: &str) -> RenderedFile {
         let ast = syn::parse_file(source).unwrap_or_else(|_| syn::parse_str("").unwrap());

@@ -1,23 +1,10 @@
-// Evaluator
-//     |
-//     +-- FileScanner
-//     |
-//     +-- AnalyzerRegistry
-//     |       |
-//     |       +-- RustAnalyzer
-//     |
-//     +-- AnalysisResult
-//     |
-//     +-- OutputFormatter
-//             |
-//             +-- MarkdownFormatter
-//             +-- CsvFormatter
-//             +-- JsonFormatter
-//             +-- ExcelFormatter
-
-use std::fs;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::{
+    analyzer::*,
     config::Config,
     detector::LanguageDetector,
     ir::Language,
@@ -27,6 +14,8 @@ use crate::{
 };
 
 use std::collections::HashMap;
+
+pub struct AstContext {}
 
 pub struct Evaluator {
     config: Config,
@@ -70,30 +59,56 @@ impl Evaluator {
             writer: Box::new(MarkdownWriter),
         }
     }
-
     pub fn evaluate_fs(&mut self) {
+        eprint!("Hi there evaluate");
         let files = self.scanner.scan();
         let mut rendered = vec![];
+        eprint!("rendered {:?}", rendered);
 
         for file in files {
             let lang = LanguageDetector::detect(&file);
-
             let renderer = self.renderers.get(&lang).unwrap_or(
                 self.renderers
                     .get(&Language::Unknown)
                     .expect("Missing Unknown renderer"),
             );
-
             let relative_path = file
                 .strip_prefix(&self.config.analysis_root)
                 .unwrap_or(&file);
-
             let src = fs::read_to_string(&file).unwrap_or_default();
-
             rendered.push(renderer.render(relative_path, &src));
         }
         let output = self.writer.write_file(rendered, &self.config);
         fs::write(&self.config.output_name, output).unwrap();
-        println!("Wrote {:?}", self.config.output_name);
+        // println!("Wrote {:?}", self.config.output_name);
+    }
+    pub fn evaluate_subject(&mut self, path: PathBuf) -> Result<Workspace, AnalysisError> {
+        eprint!("evaluate_from_subject");
+        // 1. File
+        self.evaluate_file(path)
+        // 2. Graph
+        // let files = self.scanner.scan();
+        // let rendered = vec![];
+
+        // for file in files {
+        //     self.evaluate_file(file);
+        // }
+        // let output = self.writer.write_file(rendered, &self.config);
+    }
+    pub fn evaluate_file(&mut self, file: PathBuf) -> Result<Workspace, AnalysisError> {
+        let analyzer = RustAnalyzer;
+
+        let request = Analyze {
+            target: AnalysisTarget::File(file),
+            subject: None,
+        };
+
+        analyzer.analyze(
+            request,
+            &AnalyzerOptions {
+                include_private: true,
+                include_tests: true,
+            },
+        )
     }
 }
