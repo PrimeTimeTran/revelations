@@ -28,7 +28,7 @@ impl Symbol {
         Self {
             id: 0,
             name: name.into(),
-            kind: SymbolKind::Workspace,
+            kind: SymbolKind::Root(RootKind::Workspace),
             visibility: Visibility::Public,
             params: None,
             return_type: None,
@@ -84,20 +84,40 @@ impl Symbol {
         }
     }
 }
+
+pub enum SymbolOrigin {
+    Internal,   // mine, same workspace/package
+    Dependency, // external package manager dependency
+    Intrinsic,  // language/runtime/std provided
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SymbolKind {
-    Workspace,
+    Root(RootKind),
+    Workspace(WorkspaceKind),
     Package(PackageKind),
     Module(ModuleKind),
-    Import(ModuleKind),
-    Impl(ImplKind),
+    File(FileKind),
+    Type(TypeKind),
     Function(FunctionKind),
     Variable(VariableKind),
-    Type(TypeKind),
+    Import(ModuleKind),
     Implementation {
         target_type: String,
         trait_name: Option<String>,
     },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RootKind {
+    Workspace,
+    Crate,
+    File,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FileKind {
+    Workspace,
+    Crate,
+    File,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -138,6 +158,12 @@ pub enum TypeKind {
 pub enum ImplKind {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum WorkspaceKind {
+    Intrinsic,
+    Dependency,
+    Internal,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ModuleKind {
     Intrinsic,
     Dependency,
@@ -157,7 +183,6 @@ pub enum FunctionKind {
     Lambda,
     TraitMethod,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 
 pub enum VariableKind {

@@ -16,14 +16,74 @@ impl Analyzer for RustAnalyzer {
         options: &AnalyzerOptions,
     ) -> Result<Workspace, AnalysisError> {
         match request.target {
-            AnalysisTarget::File(path) => self.analyze_file(path, options),
-
             AnalysisTarget::Workspace(path) => self.analyze_workspace(path, options),
+            AnalysisTarget::File(path) => self.analyze_file(path, options),
         }
     }
 }
-
 impl RustAnalyzer {
+    // pub struct ScopeQuery {
+    //     pub root: SymbolId,
+
+    //     // What direction do we walk?
+    //     pub direction: Traversal,
+
+    //     // What symbols count?
+    //     pub include: SymbolFilter,
+    // }
+
+    // pub enum Traversal {
+    //     Down,
+    //     Up,
+    //     Both,
+    // }
+
+    // pub enum SymbolFilter {
+    //     All,
+    //     Declarations,
+    //     Code,
+    //     Modules,
+    // }
+    // pub fn metrics(&self, query: ScopeQuery) -> Metrics {
+    //     let symbols = self.project(query);
+    //     Metrics::from_symbols(symbols)
+    // }
+    fn analyze_workspace(
+        &self,
+        path: PathBuf,
+        options: &AnalyzerOptions,
+    ) -> Result<Workspace, AnalysisError> {
+        let mut workspace = Workspace::new();
+        for entry in walkdir::WalkDir::new(&path) {
+            let entry = entry.map_err(|e| AnalysisError::Parse(e.to_string()))?;
+            let file = entry.path();
+            if file.extension().and_then(|x| x.to_str()) != Some("rs") {
+                continue;
+            }
+            let source =
+                std::fs::read_to_string(file).map_err(|e| AnalysisError::Parse(e.to_string()))?;
+            let ast = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
+            let file_id = workspace.add_symbol(
+                Symbol::file(
+                    file.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+                Some(workspace.root),
+            );
+            workspace.files.push(file_id);
+            let mut visitor = RustVisitor::new(options, &mut workspace, file_id);
+            visitor.visit_file(&ast);
+        }
+        self.workspace_metrics(&workspace);
+        self.package_metrics(&workspace);
+        // self.module_metrics(&workspace);
+        self.file_metrics(&workspace);
+        Ok(workspace)
+    }
+    fn analyze_package(&self, path: PathBuf, options: &AnalyzerOptions) {}
+    fn analyze_module(&self, path: PathBuf, options: &AnalyzerOptions) {}
     fn analyze_file(
         &self,
         path: PathBuf,
@@ -42,56 +102,114 @@ impl RustAnalyzer {
             ),
             Some(workspace.root),
         );
-
         workspace.files.push(file_id);
-
         let mut visitor = RustVisitor::new(options, &mut workspace, file_id);
-
         visitor.visit_file(&ast);
-
-        Ok(workspace)
-    }
-
-    fn analyze_workspace(
-        &self,
-        path: PathBuf,
-        options: &AnalyzerOptions,
-    ) -> Result<Workspace, AnalysisError> {
-        let mut workspace = Workspace::new();
-
-        for entry in walkdir::WalkDir::new(&path) {
-            let entry = entry.map_err(|e| AnalysisError::Parse(e.to_string()))?;
-
-            let file = entry.path();
-
-            if file.extension().and_then(|x| x.to_str()) != Some("rs") {
-                continue;
-            }
-            let source =
-                std::fs::read_to_string(file).map_err(|e| AnalysisError::Parse(e.to_string()))?;
-
-            let ast = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
-
-            let file_id = workspace.add_symbol(
-                Symbol::file(
-                    file.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                ),
-                Some(workspace.root),
-            );
-
-            workspace.files.push(file_id);
-
-            let mut visitor = RustVisitor::new(options, &mut workspace, file_id);
-
-            visitor.visit_file(&ast);
-        }
-
         Ok(workspace)
     }
 }
+
+impl RustAnalyzer {
+    pub fn workspace_metrics(&self, workspace: &Workspace) -> WorkspaceMetrics {
+        let metrics = workspace.metrics();
+        let mut metrics = WorkspaceMetrics::new(workspace);
+        for symbol in &workspace.symbols {
+            match &symbol.kind {
+                SymbolKind::Function(_) => metrics.functions += 1,
+                SymbolKind::Type(_) => metrics.types += 1,
+                SymbolKind::Import(_) => metrics.imports += 1,
+                _ => {}
+            }
+        }
+        metrics
+    }
+    pub fn package_metrics(&self, workspace: &Workspace) -> Vec<PackageMetrics> {
+        workspace
+            .packages
+            .iter()
+            .map(|package_id| {
+                let package = &workspace.symbols[*package_id as usize];
+                let mut metrics = PackageMetrics::new(package.name.clone());
+                self.collect_package_metrics(workspace, *package_id, &mut metrics);
+                metrics
+            })
+            .collect()
+    }
+    fn collect_package_metrics(
+        &self,
+        workspace: &Workspace,
+        symbol_id: SymbolId,
+        metrics: &mut PackageMetrics,
+    ) {
+        let symbol = &workspace.symbols[symbol_id as usize];
+        match &symbol.kind {
+            SymbolKind::Module(ModuleKind::Dependency) => {
+                metrics.files += 1;
+            }
+            SymbolKind::Function(_) => {
+                metrics.functions += 1;
+                metrics.symbols += 1;
+            }
+            SymbolKind::Type(_) => {
+                metrics.types += 1;
+                metrics.symbols += 1;
+            }
+            _ => {
+                metrics.symbols += 1;
+            }
+        }
+        for child in &symbol.children {
+            self.collect_package_metrics(workspace, *child, metrics);
+        }
+    }
+    // pub fn module_metrics(&self, workspace: &Workspace) -> Vec<FileMetrics> {
+    //     todo!("analyzer module_metrics")
+    // }
+    pub fn file_metrics(&self, workspace: &Workspace) -> Vec<FileMetrics> {
+        workspace
+            .files
+            .iter()
+            .map(|file_id| {
+                let file = &workspace.symbols[*file_id as usize];
+                let mut metrics = FileMetrics::new(PathBuf::from(&file.name));
+                for child in &file.children {
+                    let symbol = &workspace.symbols[*child as usize];
+                    metrics.symbols += 1;
+                    match &symbol.kind {
+                        SymbolKind::Function(_) => metrics.functions += 1,
+                        SymbolKind::Import(_) => metrics.imports += 1,
+                        SymbolKind::Type(_) => metrics.types += 1,
+                        _ => {}
+                    }
+                }
+                metrics
+            })
+            .collect()
+    }
+}
+pub struct ScopeQuery {
+    pub root: SymbolId,
+
+    // What direction do we walk?
+    pub direction: Traversal,
+
+    // What symbols count?
+    pub include: SymbolFilter,
+}
+
+pub enum Traversal {
+    Down,
+    Up,
+    Both,
+}
+
+pub enum SymbolFilter {
+    All,
+    Declarations,
+    Code,
+    Modules,
+}
+
 pub struct RustVisitor<'a> {
     options: &'a AnalyzerOptions,
     workspace: &'a mut Workspace,
@@ -302,12 +420,12 @@ fn create_method_symbol(item: &syn::ImplItemFn) -> (Symbol, Option<Vec<(String, 
 
     (method_symbol, params)
 }
-
 pub struct Workspace {
     pub root: SymbolId,
     pub symbols: Vec<Symbol>,
     pub files: Vec<SymbolId>,
     pub packages: Vec<SymbolId>,
+    pub modules: Vec<SymbolId>,
     next_sym_id: SymbolId,
 }
 impl Workspace {
@@ -315,15 +433,15 @@ impl Workspace {
         let mut workspace = Self {
             root: 0,
             symbols: Vec::new(),
-            files: Vec::new(),
             packages: Vec::new(),
+            modules: Vec::new(),
+            files: Vec::new(),
             next_sym_id: 0,
         };
         let root = workspace.add_symbol(Symbol::workspace("workspace"), None);
         workspace.root = root;
         workspace
     }
-
     pub fn add_symbol(&mut self, mut symbol: Symbol, parent: Option<SymbolId>) -> SymbolId {
         let id = self.next_sym_id;
         self.next_sym_id += 1;
@@ -341,35 +459,166 @@ impl Workspace {
         &mut self.symbols[id as usize]
     }
 }
+impl Workspace {
+    pub fn metrics(&self) -> AnalysisMetrics {
+        AnalysisMetrics {
+            workspace: self.workspace_metrics(),
+            packages: self
+                .packages
+                .iter()
+                .map(|id| self.package_metrics(*id))
+                .collect(),
+            modules: self
+                .files
+                .iter()
+                .map(|id| self.module_metrics(*id))
+                .collect(),
+            files: self.files.iter().map(|id| self.file_metrics(*id)).collect(),
+        }
+    }
+    pub fn workspace_metrics(&self) -> WorkspaceMetrics {
+        let mut metrics = WorkspaceMetrics::default();
+        metrics.packages = self.packages.len();
+        metrics.files = self.files.len();
+        self.collect_metrics(self.root, &mut metrics);
+        metrics
+    }
+
+    fn collect_metrics(&self, id: SymbolId, metrics: &mut WorkspaceMetrics) {
+        let symbol = &self.symbols[id as usize];
+        match &symbol.kind {
+            SymbolKind::Function(_) => metrics.functions += 1,
+            SymbolKind::Type(_) => metrics.types += 1,
+            SymbolKind::Import(_) => metrics.imports += 1,
+            // Don't count containers as symbols
+            SymbolKind::Package(_) => {}
+            SymbolKind::Module(_) => {}
+            SymbolKind::File(_) => {}
+            SymbolKind::Workspace(_) => {}
+            _ => {}
+        }
+
+        for child in &symbol.children {
+            self.collect_metrics(*child, metrics);
+        }
+    }
+    // fn collect_metrics(&self, id: SymbolId, metrics: &mut WorkspaceMetrics) {
+    //     let symbol = &self.symbols[id as usize];
+    //     match &symbol.kind {
+    //         SymbolKind::Function(_) => metrics.functions += 1,
+    //         SymbolKind::Type(_) => metrics.types += 1,
+    //         SymbolKind::Import(_) => metrics.imports += 1,
+    //         // Don't count containers as symbols
+    //         SymbolKind::Package(_) => {}
+    //         SymbolKind::Module(_) => {}
+    //         SymbolKind::File(_) => {}
+    //         SymbolKind::Workspace(_) => {}
+    //         _ => {}
+    //     }
+    //     for child in &symbol.children {
+    //         self.collect_metrics(*child, metrics);
+    //     }
+    // }
+    pub fn package_metrics(&self, id: SymbolId) -> PackageMetrics {
+        let package = &self.symbols[id as usize];
+        let mut metrics = PackageMetrics::new(package.name.clone());
+        self.collect_package_metrics(id, &mut metrics);
+        metrics
+    }
+    fn collect_package_metrics(&self, id: SymbolId, metrics: &mut PackageMetrics) {
+        let symbol = &self.symbols[id as usize];
+        metrics.symbols += 1;
+        match &symbol.kind {
+            SymbolKind::File(_) => {
+                metrics.files += 1;
+            }
+            SymbolKind::Module(_) => {
+                metrics.modules += 1;
+            }
+            SymbolKind::Package(_) => {
+                metrics.packages += 1;
+            }
+            SymbolKind::Function(_) => {
+                metrics.functions += 1;
+            }
+            SymbolKind::Type(_) => {
+                metrics.types += 1;
+            }
+            SymbolKind::Import(_) => {
+                metrics.imports += 1;
+            }
+            SymbolKind::Implementation { .. } => {
+                metrics.implementations += 1;
+            }
+            _ => {}
+        }
+
+        for child in &symbol.children {
+            self.collect_package_metrics(*child, metrics);
+        }
+    }
+
+    pub fn module_metrics(&self, id: SymbolId) -> ModuleMetrics {
+        let module = &self.symbols[id as usize];
+        let mut metrics = ModuleMetrics::new(module.name.clone());
+        self.collect_module_metrics(id, &mut metrics);
+        metrics
+    }
+
+    fn collect_module_metrics(&self, id: SymbolId, metrics: &mut ModuleMetrics) {
+        let symbol = &self.symbols[id as usize];
+        metrics.symbols += 1;
+        match &symbol.kind {
+            SymbolKind::Module(ModuleKind::Internal) => {
+                metrics.files += 1;
+            }
+            SymbolKind::Function(_) => {
+                metrics.functions += 1;
+            }
+            SymbolKind::Type(_) => {
+                metrics.types += 1;
+            }
+            _ => {}
+        }
+        for child in &symbol.children {
+            self.collect_module_metrics(*child, metrics);
+        }
+    }
+    pub fn file_metrics(&self, id: SymbolId) -> FileMetrics {
+        let file = &self.symbols[id as usize];
+        let path = PathBuf::from(&file.name);
+        let mut metrics = FileMetrics::new(path);
+        self.collect_file_metrics(id, &mut metrics);
+        metrics
+    }
+
+    fn collect_file_metrics(&self, id: SymbolId, metrics: &mut FileMetrics) {
+        let symbol = &self.symbols[id as usize];
+
+        metrics.symbols += 1;
+
+        match &symbol.kind {
+            SymbolKind::Function(_) => {
+                metrics.functions += 1;
+            }
+            SymbolKind::Import(_) => {
+                metrics.imports += 1;
+            }
+            SymbolKind::Type(_) => {
+                metrics.types += 1;
+            }
+            _ => {}
+        }
+
+        for child in &symbol.children {
+            self.collect_file_metrics(*child, metrics);
+        }
+    }
+}
 #[derive(Clone, Debug)]
 pub struct ParsedFile {
     pub path: PathBuf,
     pub ast: syn::File,
-}
-
-pub struct WorkspaceMetrics {
-    pub files: usize,
-    pub packages: usize,
-    pub symbols: usize,
-    pub functions: usize,
-    pub types: usize,
-    pub imports: usize,
-}
-
-pub struct PackageMetrics {
-    pub name: String,
-    pub files: usize,
-    pub symbols: usize,
-    pub functions: usize,
-    pub types: usize,
-}
-
-pub struct FileMetrics {
-    pub path: PathBuf,
-    pub symbols: usize,
-    pub functions: usize,
-    pub imports: usize,
-    pub types: usize,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Scope {
@@ -377,6 +626,15 @@ pub struct Scope {
     pub parent: Option<SymbolId>,
     pub children: Vec<SymbolId>,
     pub symbols: HashMap<String, SymbolId>,
+}
+pub enum ScopeKind {
+    Workspace,
+    Package,
+    Module,
+    File,
+    Type,
+    Impl,
+    Function,
 }
 #[derive(Clone, Debug, Default)]
 pub struct FileScope {

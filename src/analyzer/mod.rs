@@ -1,8 +1,10 @@
 pub mod error;
+pub mod metrics;
 pub mod r#rust;
 pub mod r#trait;
 pub mod ts;
 pub use error::*;
+pub use metrics::*;
 pub use r#rust::*;
 pub use r#trait::*;
 pub use ts::*;
