@@ -4,17 +4,24 @@ pub struct Symbol {
     pub id: SymbolId,
     pub name: String,
     pub kind: SymbolKind,
+    pub location: Option<SymbolLocation>,
     pub visibility: Visibility,
     pub params: Option<Vec<(String, String)>>,
     pub return_type: Option<String>,
     pub children: Vec<SymbolId>,
 }
 impl Symbol {
-    pub fn new(name: impl Into<String>, kind: SymbolKind, visibility: Visibility) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        kind: SymbolKind,
+        visibility: Visibility,
+        location: Option<SymbolLocation>,
+    ) -> Self {
         Self {
             id: 0,
             name: name.into(),
             kind,
+            location,
             visibility,
             params: None,
             return_type: None,
@@ -28,6 +35,7 @@ impl Symbol {
         Self {
             id: 0,
             name: name.into(),
+            location: Some(SymbolLocation::default()),
             kind: SymbolKind::Root(RootKind::Workspace),
             visibility: Visibility::Public,
             params: None,
@@ -40,6 +48,7 @@ impl Symbol {
         Self {
             id: 0,
             name: name.into(),
+            location: Some(SymbolLocation::default()),
             kind: SymbolKind::Package(PackageKind::Crate),
             visibility: Visibility::Public,
             params: None,
@@ -52,6 +61,7 @@ impl Symbol {
         Self {
             id: 0,
             name: name.into(),
+            location: Some(SymbolLocation::default()),
             kind: SymbolKind::Module(ModuleKind::Dependency),
             visibility: Visibility::Public,
             params: None,
@@ -64,6 +74,7 @@ impl Symbol {
         Self {
             id: 0,
             name: name.into(),
+            location: Some(SymbolLocation::default()),
             kind: SymbolKind::Module(ModuleKind::Dependency),
             visibility: Visibility::Public,
             params: None,
@@ -76,6 +87,7 @@ impl Symbol {
         Self {
             id: 0,
             name: name.into(),
+            location: Some(SymbolLocation::default()),
             kind: SymbolKind::Function(kind),
             visibility,
             params: None,
@@ -84,7 +96,12 @@ impl Symbol {
         }
     }
 }
-
+#[derive(Clone, Debug, Default)]
+pub struct SymbolLocation {
+    pub file: SymbolId,
+    pub start: usize,
+    pub end: usize,
+}
 pub enum SymbolOrigin {
     Internal,   // mine, same workspace/package
     Dependency, // external package manager dependency

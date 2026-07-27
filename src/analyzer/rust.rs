@@ -2,11 +2,12 @@ use std::{collections::HashMap, fs::read_to_string, path::PathBuf};
 
 use crate::{analyzer::*, ir::*};
 use quote::ToTokens;
+use regex_syntax::ast::Ast;
 use syn::{
     File,
+    spanned::Spanned,
     visit::{self, Visit},
 };
-
 pub struct RustAnalyzer;
 
 impl Analyzer for RustAnalyzer {
@@ -22,32 +23,6 @@ impl Analyzer for RustAnalyzer {
     }
 }
 impl RustAnalyzer {
-    // pub struct ScopeQuery {
-    //     pub root: SymbolId,
-
-    //     // What direction do we walk?
-    //     pub direction: Traversal,
-
-    //     // What symbols count?
-    //     pub include: SymbolFilter,
-    // }
-
-    // pub enum Traversal {
-    //     Down,
-    //     Up,
-    //     Both,
-    // }
-
-    // pub enum SymbolFilter {
-    //     All,
-    //     Declarations,
-    //     Code,
-    //     Modules,
-    // }
-    // pub fn metrics(&self, query: ScopeQuery) -> Metrics {
-    //     let symbols = self.project(query);
-    //     Metrics::from_symbols(symbols)
-    // }
     fn analyze_workspace(
         &self,
         path: PathBuf,
@@ -60,9 +35,7 @@ impl RustAnalyzer {
             if file.extension().and_then(|x| x.to_str()) != Some("rs") {
                 continue;
             }
-            let source =
-                std::fs::read_to_string(file).map_err(|e| AnalysisError::Parse(e.to_string()))?;
-            let ast = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
+            let (source, ast) = self.build_source(path.clone());
             let file_id = workspace.add_symbol(
                 Symbol::file(
                     file.file_name()
@@ -73,13 +46,13 @@ impl RustAnalyzer {
                 Some(workspace.root),
             );
             workspace.files.push(file_id);
-            let mut visitor = RustVisitor::new(options, &mut workspace, file_id);
-            visitor.visit_file(&ast);
+            let mut visitor = RustVisitor::new(options, &mut workspace, file_id, &source);
+            visitor.visit_file(&ast.unwrap());
         }
         self.workspace_metrics(&workspace);
         self.package_metrics(&workspace);
-        // self.module_metrics(&workspace);
         self.file_metrics(&workspace);
+
         Ok(workspace)
     }
     fn analyze_package(&self, path: PathBuf, options: &AnalyzerOptions) {}
@@ -89,9 +62,7 @@ impl RustAnalyzer {
         path: PathBuf,
         options: &AnalyzerOptions,
     ) -> Result<Workspace, AnalysisError> {
-        let source =
-            std::fs::read_to_string(&path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
-        let ast = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
+        let (source, ast) = self.build_source(path.clone());
         let mut workspace = Workspace::new();
         let file_id = workspace.add_symbol(
             Symbol::file(
@@ -103,9 +74,17 @@ impl RustAnalyzer {
             Some(workspace.root),
         );
         workspace.files.push(file_id);
-        let mut visitor = RustVisitor::new(options, &mut workspace, file_id);
-        visitor.visit_file(&ast);
+        let mut visitor = RustVisitor::new(options, &mut workspace, file_id, &source);
+        visitor.visit_file(&ast.unwrap());
+
         Ok(workspace)
+    }
+    fn build_source(&self, path: PathBuf) -> (String, Result<File, AnalysisError>) {
+        let source = std::fs::read_to_string(&path)
+            .map_err(|e| AnalysisError::Parse(e.to_string()))
+            .unwrap();
+        let ast = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()));
+        (source, ast)
     }
 }
 
@@ -162,9 +141,6 @@ impl RustAnalyzer {
             self.collect_package_metrics(workspace, *child, metrics);
         }
     }
-    // pub fn module_metrics(&self, workspace: &Workspace) -> Vec<FileMetrics> {
-    //     todo!("analyzer module_metrics")
-    // }
     pub fn file_metrics(&self, workspace: &Workspace) -> Vec<FileMetrics> {
         workspace
             .files
@@ -187,49 +163,42 @@ impl RustAnalyzer {
             .collect()
     }
 }
-pub struct ScopeQuery {
-    pub root: SymbolId,
-
-    // What direction do we walk?
-    pub direction: Traversal,
-
-    // What symbols count?
-    pub include: SymbolFilter,
-}
-
-pub enum Traversal {
-    Down,
-    Up,
-    Both,
-}
-
-pub enum SymbolFilter {
-    All,
-    Declarations,
-    Code,
-    Modules,
-}
-
 pub struct RustVisitor<'a> {
     options: &'a AnalyzerOptions,
     workspace: &'a mut Workspace,
     scope_stack: Vec<SymbolId>,
+    source: &'a str,
+    file: SymbolId,
     current_impl: Option<SymbolId>,
+    // current_workspace: Option<SymbolId>,
+    // current_package: Option<SymbolId>,
+    // current_module: Option<SymbolId>,
+    // current_file: Option<SymbolId>,
+    // current_trait: Option<SymbolId>,
 }
 impl<'a> RustVisitor<'a> {
     pub fn new(
         options: &'a AnalyzerOptions,
         workspace: &'a mut Workspace,
-        root_scope: SymbolId,
+        file: SymbolId,
+        source: &'a str,
     ) -> Self {
         Self {
             options,
             workspace,
-            scope_stack: vec![root_scope],
+            file,
+            source,
+            scope_stack: vec![file],
             current_impl: None,
         }
     }
-
+    fn location(&self, span: proc_macro2::Span) -> SymbolLocation {
+        SymbolLocation {
+            file: self.file,
+            start: span.start().line,
+            end: span.end().line,
+        }
+    }
     fn current_scope(&self) -> SymbolId {
         *self
             .scope_stack
@@ -243,7 +212,6 @@ impl<'a> RustVisitor<'a> {
     fn push_scope(&mut self, id: SymbolId) {
         self.scope_stack.push(id);
     }
-
     fn pop_scope(&mut self) {
         self.scope_stack.pop();
     }
@@ -251,18 +219,14 @@ impl<'a> RustVisitor<'a> {
 
 impl<'ast> Visit<'ast> for RustVisitor<'_> {
     fn visit_file(&mut self, node: &'ast syn::File) {
-        println!("VISITING FILE ITEMS={}", node.items.len());
-        for item in &node.items {
-            println!("ITEM: {:?}", std::mem::discriminant(item));
-        }
         visit::visit_file(self, node);
     }
     fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
         let name = node.to_token_stream().to_string();
-
         self.add_symbol(Symbol {
             id: 0,
             name,
+            location: Some(self.location(node.span())),
             kind: SymbolKind::Import(ModuleKind::Dependency),
             visibility: Visibility::Private,
             params: None,
@@ -276,6 +240,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
         self.add_symbol(Symbol {
             id: 0,
             name: node.ident.to_string(),
+            location: Some(self.location(node.span())),
             kind: SymbolKind::Type(TypeKind::Struct),
             visibility: Visibility::Private,
             params: None,
@@ -286,10 +251,11 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
         visit::visit_item_struct(self, node);
     }
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        println!("FOUND FN {}", node.sig.ident);
+        // println!("FOUND FN {}", node.sig.ident);
         self.add_symbol(Symbol {
             id: 0,
             name: node.sig.ident.to_string(),
+            location: Some(self.location(node.span())),
             kind: SymbolKind::Function(FunctionKind::Free),
             visibility: match &node.vis {
                 syn::Visibility::Public(_) => Visibility::Public,
@@ -304,12 +270,11 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
     }
     fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
         let name = node.self_ty.to_token_stream().to_string();
-
-        println!("FOUND IMPL {}", name);
-
+        // println!("FOUND IMPL {}", name);
         let impl_id = self.add_symbol(Symbol {
             id: 0,
             name: format!("impl {}", name),
+            location: Some(self.location(node.span())),
             kind: SymbolKind::Implementation {
                 target_type: name.clone(),
                 trait_name: node
@@ -322,22 +287,17 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
             return_type: None,
             children: Vec::new(),
         });
-
         self.current_impl = Some(impl_id);
-
         self.scope_stack.push(impl_id);
-
         visit::visit_item_impl(self, node);
-
         self.scope_stack.pop();
-
         self.current_impl = None;
     }
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        println!("FOUND METHOD {}", node.sig.ident);
-
+        // println!("FOUND METHOD {}", node.sig.ident);
         self.add_symbol(Symbol {
             id: 0,
+            location: Some(self.location(node.span())),
             name: node.sig.ident.to_string(),
             kind: SymbolKind::Function(FunctionKind::Method),
             visibility: match &node.vis {
@@ -348,30 +308,31 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
             return_type: Some(node.sig.output.to_token_stream().to_string()),
             children: Vec::new(),
         });
-
         visit::visit_impl_item_fn(self, node);
     }
-    fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
-        println!("FOUND ENUM {}", item.ident);
+    fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
+        // println!("FOUND ENUM {}", item.ident);
         self.add_symbol(Symbol {
             id: 0,
-            name: item.ident.to_string(),
+            location: Some(self.location(node.span())),
+            name: node.ident.to_string(),
             kind: SymbolKind::Type(TypeKind::Enum),
-            visibility: visibility(&item.vis),
+            visibility: visibility(&node.vis),
             params: None,
             return_type: None,
             children: Vec::new(),
         });
-        visit::visit_item_enum(self, item);
+        visit::visit_item_enum(self, node);
     }
-    fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
-        println!("FOUND TRAIT {}", item.ident);
+    fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+        println!("FOUND TRAIT {}", node.ident);
 
         self.add_symbol(Symbol {
             id: 0,
-            name: item.ident.to_string(),
+            name: node.ident.to_string(),
+            location: Some(self.location(node.span())),
             kind: SymbolKind::Type(TypeKind::Trait),
-            visibility: match &item.vis {
+            visibility: match &node.vis {
                 syn::Visibility::Public(_) => Visibility::Public,
                 _ => Visibility::Private,
             },
@@ -380,7 +341,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
             children: Vec::new(),
         });
 
-        visit::visit_item_trait(self, item);
+        visit::visit_item_trait(self, node);
     }
 }
 
@@ -391,35 +352,35 @@ fn visibility(vis: &syn::Visibility) -> Visibility {
     }
 }
 
-fn create_method_symbol(item: &syn::ImplItemFn) -> (Symbol, Option<Vec<(String, String)>>) {
-    let params = Some(
-        item.sig
-            .inputs
-            .iter()
-            .map(|arg| match arg {
-                syn::FnArg::Typed(pat) => (
-                    pat.pat.to_token_stream().to_string(),
-                    pat.ty.to_token_stream().to_string(),
-                ),
-                syn::FnArg::Receiver(rec) => {
-                    ("self".to_string(), rec.to_token_stream().to_string())
-                }
-            })
-            .collect(),
-    );
+// fn create_method_symbol(node: &syn::ImplItemFn) -> (Symbol, Option<Vec<(String, String)>>) {
+//     let params = Some(
+//         node.sig
+//             .inputs
+//             .iter()
+//             .map(|arg| match arg {
+//                 syn::FnArg::Typed(pat) => (
+//                     pat.pat.to_token_stream().to_string(),
+//                     pat.ty.to_token_stream().to_string(),
+//                 ),
+//                 syn::FnArg::Receiver(rec) => {
+//                     ("self".to_string(), rec.to_token_stream().to_string())
+//                 }
+//             })
+//             .collect(),
+//     );
 
-    let method_symbol = Symbol {
-        id: 0,
-        name: item.sig.ident.to_string(),
-        kind: SymbolKind::Function(FunctionKind::Method),
-        visibility: visibility(&item.vis),
-        params: params.clone(),
-        return_type: Some(item.sig.output.to_token_stream().to_string()),
-        children: Vec::new(),
-    };
-
-    (method_symbol, params)
-}
+//     let method_symbol = Symbol {
+//         id: 0,
+//         // location: Some(self.location(node.span())),
+//         name: node.sig.ident.to_string(),
+//         kind: SymbolKind::Function(FunctionKind::Method),
+//         visibility: visibility(&node.vis),
+//         params: params.clone(),
+//         return_type: Some(node.sig.output.to_token_stream().to_string()),
+//         children: Vec::new(),
+//     };
+//     (method_symbol, params)
+// }
 pub struct Workspace {
     pub root: SymbolId,
     pub symbols: Vec<Symbol>,
@@ -476,6 +437,7 @@ impl Workspace {
             files: self.files.iter().map(|id| self.file_metrics(*id)).collect(),
         }
     }
+
     pub fn workspace_metrics(&self) -> WorkspaceMetrics {
         let mut metrics = WorkspaceMetrics::default();
         metrics.packages = self.packages.len();
@@ -483,7 +445,6 @@ impl Workspace {
         self.collect_metrics(self.root, &mut metrics);
         metrics
     }
-
     fn collect_metrics(&self, id: SymbolId, metrics: &mut WorkspaceMetrics) {
         let symbol = &self.symbols[id as usize];
         match &symbol.kind {
@@ -502,23 +463,7 @@ impl Workspace {
             self.collect_metrics(*child, metrics);
         }
     }
-    // fn collect_metrics(&self, id: SymbolId, metrics: &mut WorkspaceMetrics) {
-    //     let symbol = &self.symbols[id as usize];
-    //     match &symbol.kind {
-    //         SymbolKind::Function(_) => metrics.functions += 1,
-    //         SymbolKind::Type(_) => metrics.types += 1,
-    //         SymbolKind::Import(_) => metrics.imports += 1,
-    //         // Don't count containers as symbols
-    //         SymbolKind::Package(_) => {}
-    //         SymbolKind::Module(_) => {}
-    //         SymbolKind::File(_) => {}
-    //         SymbolKind::Workspace(_) => {}
-    //         _ => {}
-    //     }
-    //     for child in &symbol.children {
-    //         self.collect_metrics(*child, metrics);
-    //     }
-    // }
+
     pub fn package_metrics(&self, id: SymbolId) -> PackageMetrics {
         let package = &self.symbols[id as usize];
         let mut metrics = PackageMetrics::new(package.name.clone());
@@ -564,7 +509,6 @@ impl Workspace {
         self.collect_module_metrics(id, &mut metrics);
         metrics
     }
-
     fn collect_module_metrics(&self, id: SymbolId, metrics: &mut ModuleMetrics) {
         let symbol = &self.symbols[id as usize];
         metrics.symbols += 1;
@@ -584,6 +528,7 @@ impl Workspace {
             self.collect_module_metrics(*child, metrics);
         }
     }
+
     pub fn file_metrics(&self, id: SymbolId) -> FileMetrics {
         let file = &self.symbols[id as usize];
         let path = PathBuf::from(&file.name);
@@ -591,7 +536,6 @@ impl Workspace {
         self.collect_file_metrics(id, &mut metrics);
         metrics
     }
-
     fn collect_file_metrics(&self, id: SymbolId, metrics: &mut FileMetrics) {
         let symbol = &self.symbols[id as usize];
 
@@ -619,6 +563,32 @@ impl Workspace {
 pub struct ParsedFile {
     pub path: PathBuf,
     pub ast: syn::File,
+}
+pub struct ScopeQuery {
+    pub root: SymbolId,
+
+    // What direction do we walk?
+    pub direction: Traversal,
+
+    // What symbols count?
+    pub include: SymbolFilter,
+}
+
+pub enum Traversal {
+    Down,
+    Up,
+    Both,
+}
+
+pub enum SymbolFilter {
+    All,
+    Declarations,
+    Code,
+    Modules,
+}
+pub fn metrics(&self, query: ScopeQuery) -> Metrics {
+    let symbols = self.project(query);
+    Metrics::from_symbols(symbols)
 }
 #[derive(Clone, Debug, Default)]
 pub struct Scope {

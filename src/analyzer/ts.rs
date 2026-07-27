@@ -5,11 +5,7 @@ use swc_core::ecma::{
     visit::Visit,
 };
 
-use crate::{
-    analyzer::*,
-    ir::{FunctionKind, Symbol, SymbolKind, TypeKind, VariableKind, Visibility},
-    parser::ParserContext,
-};
+use crate::{analyzer::*, ir::*, parser::ParserContext};
 
 pub struct TypeScriptAnalyzer;
 
@@ -75,6 +71,7 @@ impl Visit for TsVisitor<'_> {
             self.symbols.push(Symbol {
                 id: 0,
                 name,
+                location: Some(SymbolLocation::default()),
                 kind: SymbolKind::Function(FunctionKind::Free),
                 visibility,
                 children: Vec::new(),
@@ -87,6 +84,7 @@ impl Visit for TsVisitor<'_> {
         self.symbols.push(Symbol {
             id: 0,
             name: c.ident.sym.to_string(),
+            location: Some(SymbolLocation::default()),
             kind: SymbolKind::Type(TypeKind::Class),
             visibility: Visibility::Public,
             params: None,
@@ -103,6 +101,7 @@ impl Visit for TsVisitor<'_> {
         self.symbols.push(Symbol {
             id: 0,
             name,
+            location: Some(SymbolLocation::default()),
             kind: SymbolKind::Variable(VariableKind::Let),
             visibility: Visibility::Public,
             params: None,
