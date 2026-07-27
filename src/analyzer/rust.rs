@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs::read_to_string, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs::read_to_string,
+    path::{Path, PathBuf},
+};
 
 use crate::{analyzer::*, ir::*};
 use quote::ToTokens;
@@ -23,6 +27,8 @@ impl Analyzer for RustAnalyzer {
     }
 }
 impl RustAnalyzer {
+    // 1. Find every Cargo package.
+    // 2. For each package, call analyze_package().
     fn analyze_workspace(
         &self,
         path: PathBuf,
@@ -52,15 +58,51 @@ impl RustAnalyzer {
         self.workspace_metrics(&workspace);
         self.package_metrics(&workspace);
         self.file_metrics(&workspace);
-
         Ok(workspace)
     }
+    // 1. Read Cargo.toml.
+    // 2. Discover src/lib.rs, src/main.rs, tests/, examples/, etc.
+    // 3. Build the package's module graph.
+    // 4. For each file, call analyze_file().
     fn analyze_package(&self, path: PathBuf, options: &AnalyzerOptions) {}
     fn analyze_module(&self, path: PathBuf, options: &AnalyzerOptions) {}
+    // 1. Read file.
+    // 2. Parse with syn.
+    // 3. Visit AST.
+    // 4. Populate symbols.
     fn analyze_file(
         &self,
         path: PathBuf,
         options: &AnalyzerOptions,
+    ) -> Result<Workspace, AnalysisError> {
+        let (source, ast) = self.build_source(path.clone());
+        self.build_workspace(options, path.clone());
+        let mut workspace = Workspace::new();
+        let file_id = workspace.add_symbol(
+            Symbol::file(
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            Some(workspace.root),
+        );
+        workspace.files.push(file_id);
+        let mut visitor: RustVisitor<'_> =
+            RustVisitor::new(options, &mut workspace, file_id, &source);
+        visitor.visit_file(&ast.unwrap());
+        Ok(workspace)
+    }
+}
+
+impl RustAnalyzer {
+    // Todo:
+    // - Walk FS for identifying nested vs parent workspace capabilities
+    // - Walk FS for multi framework entries
+    fn build_workspace(
+        &self,
+        options: &AnalyzerOptions,
+        path: PathBuf,
     ) -> Result<Workspace, AnalysisError> {
         let (source, ast) = self.build_source(path.clone());
         let mut workspace = Workspace::new();
@@ -76,7 +118,6 @@ impl RustAnalyzer {
         workspace.files.push(file_id);
         let mut visitor = RustVisitor::new(options, &mut workspace, file_id, &source);
         visitor.visit_file(&ast.unwrap());
-
         Ok(workspace)
     }
     fn build_source(&self, path: PathBuf) -> (String, Result<File, AnalysisError>) {
@@ -352,35 +393,7 @@ fn visibility(vis: &syn::Visibility) -> Visibility {
     }
 }
 
-// fn create_method_symbol(node: &syn::ImplItemFn) -> (Symbol, Option<Vec<(String, String)>>) {
-//     let params = Some(
-//         node.sig
-//             .inputs
-//             .iter()
-//             .map(|arg| match arg {
-//                 syn::FnArg::Typed(pat) => (
-//                     pat.pat.to_token_stream().to_string(),
-//                     pat.ty.to_token_stream().to_string(),
-//                 ),
-//                 syn::FnArg::Receiver(rec) => {
-//                     ("self".to_string(), rec.to_token_stream().to_string())
-//                 }
-//             })
-//             .collect(),
-//     );
-
-//     let method_symbol = Symbol {
-//         id: 0,
-//         // location: Some(self.location(node.span())),
-//         name: node.sig.ident.to_string(),
-//         kind: SymbolKind::Function(FunctionKind::Method),
-//         visibility: visibility(&node.vis),
-//         params: params.clone(),
-//         return_type: Some(node.sig.output.to_token_stream().to_string()),
-//         children: Vec::new(),
-//     };
-//     (method_symbol, params)
-// }
+#[derive(Clone, Debug)]
 pub struct Workspace {
     pub root: SymbolId,
     pub symbols: Vec<Symbol>,
@@ -403,6 +416,12 @@ impl Workspace {
         workspace.root = root;
         workspace
     }
+    pub fn get(&self, id: SymbolId) -> &Symbol {
+        &self.symbols[id as usize]
+    }
+    pub fn get_mut(&mut self, id: SymbolId) -> &mut Symbol {
+        &mut self.symbols[id as usize]
+    }
     pub fn add_symbol(&mut self, mut symbol: Symbol, parent: Option<SymbolId>) -> SymbolId {
         let id = self.next_sym_id;
         self.next_sym_id += 1;
@@ -412,12 +431,6 @@ impl Workspace {
         }
         self.symbols.push(symbol);
         id
-    }
-    pub fn get(&self, id: SymbolId) -> &Symbol {
-        &self.symbols[id as usize]
-    }
-    pub fn get_mut(&mut self, id: SymbolId) -> &mut Symbol {
-        &mut self.symbols[id as usize]
     }
 }
 impl Workspace {
@@ -586,10 +599,10 @@ pub enum SymbolFilter {
     Code,
     Modules,
 }
-pub fn metrics(&self, query: ScopeQuery) -> Metrics {
-    let symbols = self.project(query);
-    Metrics::from_symbols(symbols)
-}
+// pub fn metrics(&self, query: ScopeQuery) -> Metrics {
+//     let symbols = self.project(query);
+//     Metrics::from_symbols(symbols)
+// }
 #[derive(Clone, Debug, Default)]
 pub struct Scope {
     pub id: SymbolId,
@@ -615,3 +628,105 @@ pub struct FileScope {
     // Stack of lexical scopes.
     pub scopes: Vec<Scope>,
 }
+
+pub struct WorkspaceDiscovery {
+    pub root: PathBuf,
+    pub estate_dir: Option<PathBuf>,
+    pub packages: Vec<PackageDiscovery>,
+}
+
+pub struct PackageDiscovery {
+    pub root: PathBuf,
+    pub manifest: Option<PathBuf>,
+    pub source_files: Vec<PathBuf>,
+}
+
+impl RustAnalyzer {
+    fn discover_workspace(&self, path: &Path) -> Result<WorkspaceDiscovery, AnalysisError> {
+        todo!()
+    }
+    fn find_workspace_root(&self, path: &Path) -> Option<PathBuf> {
+        todo!()
+    }
+    fn find_estate_dir(&self, root: &Path) -> Option<PathBuf> {
+        todo!()
+    }
+    fn discover_packages(&self, root: &Path) -> Result<Vec<PackageDiscovery>, AnalysisError> {
+        todo!()
+    }
+    fn discover_sources(&self, package: &Path) -> Result<Vec<PathBuf>, AnalysisError> {
+        todo!()
+    }
+    // pub fn build_workspace(
+    //     &self,
+    //     options: &AnalyzerOptions,
+    //     path: PathBuf,
+    // ) -> Result<Workspace, AnalysisError> {
+    //     let discovery = self.discover_workspace(&path)?;
+    //     let mut workspace = Workspace::new();
+    //     for package in &discovery.packages {
+    //         self.build_package(options, workspace.clone(), package);
+    //     }
+    //     Ok(workspace)
+    // }
+    // pub fn build_package(
+    //     &self,
+    //     options: &AnalyzerOptions,
+    //     workspace: Workspace,
+    //     package: &PackageDiscovery,
+    // ) -> Result<String, String> {
+    //     Ok("".to_string())
+    // }
+}
+
+// Building up the Estate
+// pub struct EstateDiscovery {
+//     pub active: PathBuf,
+//     pub parents: Vec<PathBuf>,
+//     pub children: Vec<PathBuf>,
+// }
+// impl RustAnalyzer {
+//     pub fn build_workspace(
+//         &self,
+//         options: &AnalyzerOptions,
+//         path: PathBuf,
+//     ) -> Result<Workspace, AnalysisError> {
+//         let discovery = self.discover_workspace(&path)?;
+//         let mut workspace = Workspace::new();
+//         for package in &discovery.packages {
+//             self.build_package(&mut workspace, package, options)?;
+//         }
+//         Ok(workspace)
+//     }
+//     fn build_package(
+//         &self,
+//         workspace: &mut Workspace,
+//         package: &PackageDiscovery,
+//         options: &AnalyzerOptions,
+//     ) -> Result<(), AnalysisError> {
+//         let package_id = workspace.add_symbol(
+//             Symbol::package(package.root.file_name().unwrap().to_string_lossy()),
+//             Some(workspace.root),
+//         );
+//         workspace.packages.push(package_id);
+//         for file in &package.source_files {
+//             self.build_file(workspace, package_id, file, options)?;
+//         }
+//         Ok(())
+//     }
+//     fn build_file(
+//         &self,
+//         workspace: &mut Workspace,
+//         parent: SymbolId,
+//         path: &Path,
+//         options: &AnalyzerOptions,
+//     ) -> Result<(), AnalysisError> {
+//         todo!()
+//     }
+//     fn find_estate_root(&self, start: &Path) -> Option<PathBuf> {
+//         todo!()
+//     }
+//     fn discover_estates(&self, root: &Path) -> Vec<PathBuf> {
+//         todo!()
+//     }
+// }
