@@ -12,6 +12,12 @@ use syn::{
     spanned::Spanned,
     visit::{self, Visit},
 };
+///--------------------------------------------------------------------------------
+///      Pipelines:
+///      - Estate(namespace definition): Are we in a workspace and how many packages do we have?
+///      - Semantic(validation): Given fs, modules, pkgs, workspaces, is my syntax correct? My imports?
+///      - Metrics(telemetry): Given a project composed of 1 or more files above, below, and sibling, what are the numbers?
+///--------------------------------------------------------------------------------
 pub struct RustAnalyzer;
 
 impl Analyzer for RustAnalyzer {
@@ -211,11 +217,6 @@ pub struct RustVisitor<'a> {
     source: &'a str,
     file: SymbolId,
     current_impl: Option<SymbolId>,
-    // current_workspace: Option<SymbolId>,
-    // current_package: Option<SymbolId>,
-    // current_module: Option<SymbolId>,
-    // current_file: Option<SymbolId>,
-    // current_trait: Option<SymbolId>,
 }
 impl<'a> RustVisitor<'a> {
     pub fn new(
@@ -366,8 +367,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
         visit::visit_item_enum(self, node);
     }
     fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
-        println!("FOUND TRAIT {}", node.ident);
-
+        // println!("FOUND TRAIT {}", node.ident);
         self.add_symbol(Symbol {
             id: 0,
             name: node.ident.to_string(),

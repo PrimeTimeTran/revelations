@@ -7,7 +7,13 @@ use syn::{
     visit::{self, Visit},
 };
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug)]
+pub struct AnalysisResult {
+    pub workspace: Workspace,
+    pub metrics: AnalysisMetrics,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct AnalysisMetrics {
     pub workspace: WorkspaceMetrics,
     pub packages: Vec<PackageMetrics>,
@@ -36,7 +42,7 @@ impl AnalysisMetrics {
         self
     }
 }
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct WorkspaceMetrics {
     pub files: usize,
     pub packages: usize,
@@ -58,7 +64,7 @@ impl WorkspaceMetrics {
         }
     }
 }
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PackageMetrics {
     pub name: String,
     pub symbols: usize,
@@ -86,7 +92,7 @@ impl PackageMetrics {
         }
     }
 }
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ModuleMetrics {
     pub name: String,
     pub files: usize,
@@ -104,9 +110,8 @@ impl ModuleMetrics {
             types: 0,
         }
     }
-    
 }
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct FileMetrics {
     pub path: PathBuf,
     pub name: String,
