@@ -47,66 +47,66 @@ impl<'a> TsVisitor<'a> {
     }
 }
 
-impl Visit for TsVisitor<'_> {
-    fn visit_fn_decl(&mut self, n: &FnDecl) {
-        let name = n.ident.sym.to_string();
+// impl Visit for TsVisitor<'_> {
+//     fn visit_fn_decl(&mut self, n: &FnDecl) {
+//         let name = n.ident.sym.to_string();
 
-        let params = Some(
-            n.function
-                .params
-                .iter()
-                .map(|param| {
-                    let name = match &param.pat {
-                        Pat::Ident(i) => i.id.sym.to_string(),
-                        _ => "arg".to_string(),
-                    };
-                    let type_name = "any".to_string();
-                    (name, type_name)
-                })
-                .collect(),
-        );
-        let return_type = n.function.return_type.as_ref().map(|_| "any".to_string());
-        let visibility = self.visibility(false);
-        if self.options.include_private || matches!(visibility, Visibility::Public) {
-            self.symbols.push(Symbol {
-                id: 0,
-                name,
-                location: Some(SymbolLocation::default()),
-                kind: SymbolKind::Function(FunctionKind::Free),
-                visibility,
-                children: Vec::new(),
-                params,
-                return_type,
-            });
-        }
-    }
-    fn visit_class_decl(&mut self, c: &ClassDecl) {
-        self.symbols.push(Symbol {
-            id: 0,
-            name: c.ident.sym.to_string(),
-            location: Some(SymbolLocation::default()),
-            kind: SymbolKind::Type(TypeKind::Class),
-            visibility: Visibility::Public,
-            params: None,
-            children: Vec::new(),
-            return_type: None,
-        });
-    }
-    fn visit_var_declarator(&mut self, v: &VarDeclarator) {
-        let name = match &v.name {
-            Pat::Ident(i) => i.id.sym.to_string(),
-            _ => return,
-        };
+//         let params = Some(
+//             n.function
+//                 .params
+//                 .iter()
+//                 .map(|param| {
+//                     let name = match &param.pat {
+//                         Pat::Ident(i) => i.id.sym.to_string(),
+//                         _ => "arg".to_string(),
+//                     };
+//                     let type_name = "any".to_string();
+//                     (name, type_name)
+//                 })
+//                 .collect(),
+//         );
+//         let return_type = n.function.return_type.as_ref().map(|_| "any".to_string());
+//         let visibility = self.visibility(false);
+//         if self.options.include_private || matches!(visibility, Visibility::Public) {
+//             self.symbols.push(Symbol {
+//                 id: 0,
+//                 name,
+//                 location: Some(SymLocation::default()),
+//                 kind: SymbolKind::Function(FunctionKind::Free),
+//                 visibility,
+//                 children: Vec::new(),
+//                 params,
+//                 return_type,
+//             });
+//         }
+//     }
+//     fn visit_class_decl(&mut self, c: &ClassDecl) {
+//         self.symbols.push(Symbol {
+//             id: 0,
+//             name: c.ident.sym.to_string(),
+//             location: Some(SymLocation::default()),
+//             kind: SymbolKind::Type(TypeKind::Class),
+//             visibility: Visibility::Public,
+//             params: None,
+//             children: Vec::new(),
+//             return_type: None,
+//         });
+//     }
+//     fn visit_var_declarator(&mut self, v: &VarDeclarator) {
+//         let name = match &v.name {
+//             Pat::Ident(i) => i.id.sym.to_string(),
+//             _ => return,
+//         };
 
-        self.symbols.push(Symbol {
-            id: 0,
-            name,
-            location: Some(SymbolLocation::default()),
-            kind: SymbolKind::Variable(VariableKind::Let),
-            visibility: Visibility::Public,
-            params: None,
-            children: Vec::new(),
-            return_type: None,
-        });
-    }
-}
+//         self.symbols.push(Symbol {
+//             id: 0,
+//             name,
+//             location: Some(SymLocation::default()),
+//             kind: SymbolKind::Variable(VariableKind::Let),
+//             visibility: Visibility::Public,
+//             params: None,
+//             children: Vec::new(),
+//             return_type: None,
+//         });
+//     }
+// }

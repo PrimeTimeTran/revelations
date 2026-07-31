@@ -2,6 +2,7 @@
     "files.exclude": {
         "**/target": true,
         ".vscode": true,
+        ".vscode": true,
 
         "KEEP.end": true
     },
@@ -10,4 +11,8 @@
 
         "KEEP.end": true
     },
+    "cSpell.words": [
+        "qself",
+        "unraw"
+    ],
 }

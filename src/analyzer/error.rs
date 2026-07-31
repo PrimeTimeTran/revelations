@@ -6,7 +6,6 @@ pub enum AnalysisError {
     UnsupportedLanguage(String),
     Io(String),
 }
-
 impl fmt::Display for AnalysisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -22,5 +21,4 @@ impl fmt::Display for AnalysisError {
         }
     }
 }
-
 impl std::error::Error for AnalysisError {}

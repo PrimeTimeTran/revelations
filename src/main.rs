@@ -1,18 +1,12 @@
-use revelation::config::Config;
-use revelation::evaluator::Evaluator;
-use std::path::PathBuf;
-// fn main() {
-//     let config = Config::load();
+pub fn main() {
+    let foo = 10;
+    let bar: i32 = 10;
 
-//     let mut evaluator = Evaluator::new(config);
-//     evaluator.evaluate_fs();
-// }
-fn main() {
-    let mut config = Config::default();
-    config.analysis_root = PathBuf::from("./src")
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from("./src"));
-    config.output_name = String::from("eval-debug.md");
-    let mut evaluator = Evaluator::new(config);
-    evaluator.evaluate_fs();
+    if foo >= 10 {
+        println!("Hi foo")
+    }
+
+    if bar >= 10 {
+        println!("Hi bar")
+    }
 }

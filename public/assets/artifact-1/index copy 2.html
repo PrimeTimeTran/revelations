@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+  <body style="background: #222; color: white; font-family: sans-serif">
+    <h1>Icon Gallery</h1>
+    <div id="grid"></div>
+
+    <script>
+      const grid = document.getElementById("grid");
+
+      grid.style.display = "grid";
+      grid.style.gridTemplateColumns = "repeat(auto-fill, 120px)";
+      grid.style.gap = "20px";
+
+      Promise.all([
+        fetch("icon-manifest.json").then((r) => r.json()),
+        fetch("icon-manifest-brand.json").then((r) => r.json())
+      ]).then(([tree, brand]) => {
+        const ids = [...Object.values(tree), ...Object.values(brand)]
+          .map((x) => x.replace(".svg", ""))
+          .filter((v, i, a) => a.indexOf(v) === i); // unique
+
+        console.log("icons:", ids.length);
+
+        for (const id of ids) {
+          const item = document.createElement("div");
+
+          item.style.textAlign = "center";
+
+          item.innerHTML = `
+      <svg width="48" height="48">
+        <use href="icons-sprite.svg#${id}"/>
+      </svg>
+      <div style="font-size:10px">${id}</div>
+    `;
+
+          grid.appendChild(item);
+        }
+      });
+    </script>
+  </body>
+</html>

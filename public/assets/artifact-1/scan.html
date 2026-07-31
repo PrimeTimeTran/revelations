@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+  <body style="background: #222; color: white; font-family: sans-serif">
+    <h2 id="title"></h2>
+
+    <input
+      id="search"
+      placeholder="Search icons..."
+      style="width: 300px; padding: 8px; font-size: 16px; margin-bottom: 10px"
+    />
+
+    <div>
+      <button onclick="prev()">⬅ Prev</button>
+      <button onclick="next()">Next ➡</button>
+    </div>
+
+    <div id="grid"></div>
+
+    <script>
+      const PAGE_SIZE = 50;
+
+      let allIcons = [];
+      let filteredIcons = [];
+      let page = 0;
+
+      const grid = document.getElementById("grid");
+      const search = document.getElementById("search");
+
+      grid.style.display = "grid";
+      grid.style.gridTemplateColumns = "repeat(auto-fill, 120px)";
+      grid.style.gap = "20px";
+      grid.style.marginTop = "20px";
+
+      async function loadManifest(file, sprite) {
+        const res = await fetch(file);
+        const json = await res.json();
+
+        return Object.keys(json).map((name) => ({
+          id: name,
+          sprite
+        }));
+      }
+
+      async function init() {
+        const normal = await loadManifest(
+          "icon-manifest.json",
+          "icons-sprite.svg"
+        );
+
+        const brand = await loadManifest(
+          "icon-manifest-brand.json",
+          "icons-sprite-brand.svg"
+        );
+
+        allIcons = [...normal, ...brand];
+
+        filteredIcons = allIcons;
+
+        console.log("loaded", allIcons.length, "icons");
+
+        render();
+      }
+
+      search.addEventListener("input", () => {
+        const q = search.value.toLowerCase().trim();
+
+        filteredIcons = !q
+          ? allIcons
+          : allIcons.filter((icon) => icon.id.toLowerCase().includes(q));
+
+        page = 0;
+        render();
+      });
+
+      function render() {
+        grid.innerHTML = "";
+
+        const start = page * PAGE_SIZE;
+        const end = Math.min(start + PAGE_SIZE, filteredIcons.length);
+
+        document.getElementById("title").innerText =
+          `${start + 1}-${end} / ${filteredIcons.length}`;
+
+        for (const icon of filteredIcons.slice(start, end)) {
+          const div = document.createElement("div");
+          div.style.textAlign = "center";
+
+          div.innerHTML = `
+            <svg width="48" height="48">
+              <use href="${icon.sprite}#${icon.id}"/>
+            </svg>
+
+            <div style="font-size:10px">
+              ${icon.id}
+            </div>
+
+            <div style="font-size:9px;color:#aaa">
+              ${icon.sprite}
+            </div>
+          `;
+
+          grid.appendChild(div);
+        }
+      }
+
+      function next() {
+        if ((page + 1) * PAGE_SIZE < filteredIcons.length) {
+          page++;
+          render();
+        }
+      }
+
+      function prev() {
+        if (page > 0) {
+          page--;
+          render();
+        }
+      }
+
+      init();
+    </script>
+  </body>
+</html>
