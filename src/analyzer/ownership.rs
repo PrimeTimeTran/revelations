@@ -270,6 +270,19 @@ impl Workspace {
     //         relations,
     //     ))
     // }
+    // Click
+    //  |
+    // Resolve AST node
+    //  |
+    // Collect ancestors
+    //  |
+    // Classify node
+    //  |
+    // Build influence edges
+    //  |
+    // Traverse outward
+    //  |
+    // Highlight affected lines
     fn resolve_node_context(
         syntax_tree: &syn::File,
         options: &AnalyzerOptions,
@@ -280,9 +293,23 @@ impl Workspace {
             nodes: Vec::new(),
             candidates: Vec::new(),
         };
+    
         resolver.visit_file(syntax_tree);
+    
+        let mut candidates = resolver.candidates;
+    
+        candidates.sort_by_key(|node| {
+            let start = node.span.start();
+            let end = node.span.end();
+            (
+                end.line - start.line,
+                end.column - start.column,
+            )
+        });
+        let subject = candidates.first().cloned();
         NodeContext {
-            nodes: resolver.nodes,
+            subject,
+            ancestors: candidates,
         }
     }
     pub fn resolve_subject(options: &AnalyzerOptions, syntax_tree: &File) {
@@ -304,12 +331,24 @@ impl Workspace {
         let click = ClickContext::new(file_path, &source, options);
         preflight(options, &source);
         let syntax_tree = Self::parse_source(&source)?;
+        let kind = classify_line(
+            &syntax_tree,
+            options.line.unwrap()
+        );
+        println!(
+            "LINE KIND: {:?}",
+            kind
+        );
         let context = Self::resolve_node_context(
             &syntax_tree,
             options,
         );
         println!("CLICK AST:");
-        for node in &context.nodes {
+        let node_context = Self::resolve_node_context(
+            &syntax_tree,
+            options,
+        );
+        for node in &context.ancestors {
             println!("  {:?}", node);
         }
         let resolved = resolve_node_at_position(
@@ -514,7 +553,6 @@ pub struct SymRelation {
     /// Optional explanation for debugging/UI
     pub label: Option<String>,
 }
-
 #[derive(Debug, Clone)]
 pub struct SymReference {
     pub name: String,
@@ -589,7 +627,72 @@ pub enum InfluenceKind {
     Mutation,
     Alias,
 }
+// fn print_final_analysis(
+//     context: &ClickContext,
+//     node_context: Option<&NodeContext>,
+// ) {
+//     println!("================ ANALYSIS =================");
+//     println!(
+//         "FILE: {}",
+//         context.file.display()
+//     );
+//     println!(
+//         "CLICK: {}:{}",
+//         context.line,
+//         context.column
+//     );
+//     println!();
 
+//     println!("{:<40} NODE", "SOURCE");
+//     println!("{:-<60}", "");
+
+//     for (idx, line) in context.source.lines().enumerate() {
+//         let line_no = idx + 1;
+
+//         let marker =
+//             if line_no == context.line {
+//                 " <--"
+//             } else {
+//                 ""
+//             };
+
+//         println!(
+//             "{:>3} | {:<40} {}",
+//             line_no,
+//             line,
+//             marker
+//         );
+//     }
+
+//     println!();
+
+//     println!("SUBJECT:");
+
+//     match &node_context.unwrap().subject {
+//         Some(node) => {
+//             println!(
+//                 "  {:?}",
+//                 node.kind
+//             );
+//         }
+//         None => {
+//             println!("  None");
+//         }
+//     }
+
+//     println!();
+
+//     println!("CONTEXT:");
+
+//     for node in &node_context.unwrap().ancestors {
+//         println!(
+//             "  └─ {:?}",
+//             node.kind
+//         );
+//     }
+
+//     println!("============================================");
+// }
 fn print_final_analysis(context: &ClickContext, symbols: Option<&[LineSymbol]>) {
     println!("================ CLICK CONTEXT ================");
     println!("FILE   : {}", context.file.display());
@@ -639,6 +742,40 @@ fn print_final_analysis(context: &ClickContext, symbols: Option<&[LineSymbol]>) 
         println!(
             "CLICK POSITION OUT OF RANGE: line {}, column {}",
             context.line, context.column
+        );
+    }
+    println!("===============================================");
+}
+
+fn print_node_context(node_context: &NodeContext, kind: LineKind) {
+    println!("================ NODE CONTEXT =================");
+
+    if let Some(subject) = &node_context.subject {
+        println!(
+            "Subject: {:?} {:?} @ {}:{}",
+            subject.kind,
+            kind,
+            subject.span.start().line,
+            subject.span.start().column,
+        );
+    } else {
+        println!("SUBJECT: None");
+    }
+    println!("Line: {:?}", kind);
+    println!("Expansion:");
+
+    for (i, node) in node_context.ancestors.iter().enumerate() {
+        let start = node.span.start();
+        let end = node.span.end();
+
+        println!(
+            "{:>2}. {:?} [{}:{} -> {}:{}]",
+            i,
+            node.kind,
+            start.line,
+            start.column,
+            end.line,
+            end.column,
         );
     }
 
@@ -763,6 +900,124 @@ pub struct LineFlags {
     // Optional: why it influences
     pub influence_kind: Option<InfluenceKind>,
 }
+#[derive(Debug)]
+pub enum LineKind {
+    // Statements
+    LetBinding,
+    ExpressionStatement,
+    Return,
+    Break,
+    Continue,
+
+    // Control flow
+    If,
+    Match,
+    Loop,
+    While,
+    For,
+
+    // Items
+    Function,
+    Struct,
+    Enum,
+    Trait,
+    Impl,
+    Module,
+    Use,
+    // Macro / compiler constructs
+    Macro,
+    Statement(StatementKind),
+    Expression(ExpressionKind),
+    Item(ItemKind),
+    Unknown,
+}
+#[derive(Debug)]
+pub enum StatementKind {
+    
+}
+#[derive(Debug)]
+pub enum ExpressionKind {
+    
+}
+#[derive(Debug)]
+pub enum ItemKind {
+    
+}
+pub struct LineContext {
+    pub kind: LineKind,
+    pub span: Span,
+}
+pub fn classify_line(
+    syntax_tree: &syn::File,
+    line: u32,
+) -> LineKind {
+    let mut visitor = LineClassifier {
+        line,
+        result: None,
+    };
+
+    visitor.visit_file(syntax_tree);
+
+    visitor.result.unwrap_or(LineKind::Unknown)
+}
+
+
+struct LineClassifier {
+    line: u32,
+    result: Option<LineKind>,
+}
+
+
+impl<'ast> syn::visit::Visit<'ast> for LineClassifier {
+
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+
+        if span_contains_line(
+            node.span(),
+            self.line,
+        ) {
+            self.result = Some(LineKind::LetBinding);
+        }
+
+        syn::visit::visit_local(self, node);
+    }
+
+
+    fn visit_expr(&mut self, node: &'ast syn::Expr) {
+
+        if span_contains_line(
+            node.span(),
+            self.line,
+        ) {
+            self.result = Some(
+                LineKind::ExpressionStatement
+            );
+        }
+
+        syn::visit::visit_expr(self, node);
+    }
+
+
+    fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+        if span_contains_line(
+            node.span(),
+            self.line,
+        ) {
+            self.result = Some(LineKind::Function);
+        }
+
+        syn::visit::visit_item_fn(self, node);
+    }
+}
+fn span_contains_line(
+    span: proc_macro2::Span,
+    line: u32,
+) -> bool {
+    let start = span.start().line as u32;
+    let end = span.end().line as u32;
+
+    line >= start && line <= end
+}
 pub struct ClickContext {
     pub file: PathBuf,
     pub line: usize,
@@ -823,6 +1078,7 @@ pub enum AstNodeKind {
     PathExpr,
 
     // Statements
+    Statement,
     LetStatement,
     ExpressionStatement,
     ReturnStatement,
@@ -883,15 +1139,20 @@ impl NodeResolver {
             });
         }
     }
-    pub fn resolve(mut self) -> Option<ResolvedNode> {
-        self.candidates
-            .sort_by_key(|node| {
-                let start = node.span.start();
-                let end = node.span.end();
-                end.line - start.line
-            });
-
-        self.candidates.into_iter().next()
+    pub fn resolve(mut self) -> NodeContext {
+        self.candidates.sort_by_key(|node| {
+            let start = node.span.start();
+            let end = node.span.end();
+            (
+                end.line - start.line,
+                end.column - start.column
+            )
+        });
+        let subject = self.candidates.first().cloned();
+        NodeContext {
+            subject,
+            ancestors: self.candidates,
+        }
     }
 }
 impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
@@ -938,10 +1199,11 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
         syn::visit::visit_expr_call(self, node);
     }
     fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
-        if self.contains(node.span()) {
-            self.nodes.push(AstNodeKind::Path);
-        }
-
+        self.check(
+            AstNodeKind::Path,
+            node.span(),
+        );
+    
         syn::visit::visit_expr_path(self, node);
     }
     fn visit_expr_lit(&mut self, node: &'ast syn::ExprLit) {
@@ -992,10 +1254,57 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
     //     syn::visit::visit_local(self, node);
     // }
 }
-
 #[derive(Debug, Clone)]
 pub struct NodeContext {
-    pub nodes: Vec<AstNodeKind>,
+    pub subject: Option<ResolvedNode>,
+    pub ancestors: Vec<ResolvedNode>,
+}
+impl NodeContext {
+    pub fn print_tree(&self) {
+        for node in &self.ancestors {
+            let start = node.span.start();
+
+            println!(
+                "{:?} @ {}:{}",
+                node.kind,
+                start.line,
+                start.column
+            );
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub enum NodeGoal {
+    Expression,
+    Statement,
+    Declaration,
+    Unknown,
+}
+impl NodeContext {
+    pub fn classify(&self) -> NodeGoal {
+        for node in &self.ancestors {
+            match node.kind {
+                AstNodeKind::Path
+                | AstNodeKind::Literal
+                | AstNodeKind::BinaryExpr
+                | AstNodeKind::CallExpr
+                | AstNodeKind::IfExpr => {
+                    return NodeGoal::Expression;
+                }
+
+                AstNodeKind::Local => {
+                    return NodeGoal::Declaration;
+                }
+
+                AstNodeKind::Statement => {
+                    return NodeGoal::Statement;
+                }
+
+                _ => {}
+            }
+        }
+        NodeGoal::Unknown
+    }
 }
 
 

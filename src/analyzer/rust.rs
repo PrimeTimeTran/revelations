@@ -14,6 +14,7 @@ use syn::{
     visit::{self, Visit},
     visit_mut::{self, VisitMut},
 };
+
 ///--------------------------------------------------------------------------------
 ///      Pipelines:
 ///      - Estate(namespace definition): Are we in a workspace and how many packages do we have?
@@ -341,7 +342,6 @@ impl Workspace {
             self.collect_metrics(*child, metrics);
         }
     }
-
     pub fn package_metrics(&self, id: SymId) -> PackageMetrics {
         let package = &self.symbols[id as usize];
         let mut metrics = PackageMetrics::new(package.name.clone());

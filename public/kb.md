@@ -136,3 +136,22 @@ Map out the boundaries bro. With a few rules we can begin having content out on 
 - Is it ok to start with 'final' concepts...? Tier 1? Tier2? Tier3?
 
 This paragraph can be linked to. ^my-block-id
+@note
+
+@note
+
+@spam
+
+@ham
+
+@bar
+
+cc
+
+@spam
+
+@bar
+
+@foo
+
+@foo

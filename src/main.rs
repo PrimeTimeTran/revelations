@@ -1,16 +1,9 @@
 pub fn main() {
-    let foo = 1;
-    let bar: i32 = 10;
+    let foo = "1";
 
-    if foo >= 100 {
-        println!("Hi foo")
-    }
+    let bar = foo;
 
-    if bar <= 100 {
-        println!("Hi bar")
-    }
+    let spam = bar;
 
-    if bar >= 100 && foo == 1000 {
-        println!("Hi bar")
-    }
+    let ham = spam;
 }

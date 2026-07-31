@@ -16,3 +16,25 @@ fn main() {
     let mut evaluator = Evaluator::new(config);
     evaluator.evaluate_fs();
 }
+
+// pub fn main() {
+//     let foo = "1";
+
+//     let bar = foo;
+
+//     let spam = bar;
+
+//     let ham = spam;
+
+//     if foo >= 100 {
+//         println!("Hi foo")
+//     }
+
+//     if bar <= 100 {
+//         println!("Hi bar")
+//     }
+
+//     if bar >= 100 && foo == 1000 {
+//         println!("Hi bar")
+//     }
+// }
