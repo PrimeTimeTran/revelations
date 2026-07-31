@@ -50,7 +50,7 @@ impl<'a> RustVisitor<'a> {
             .last()
             .expect("visitor has no active scope")
     }
-    fn add_symbol(&mut self, symbol: Symbol) -> SymId {
+    fn add_symbol(&mut self, symbol: Sym) -> SymId {
         let owner = self.current_scope();
         self.workspace.add_symbol(symbol, Some(owner))
     }
@@ -63,7 +63,7 @@ impl<'a> RustVisitor<'a> {
 }
 impl<'ast> Visit<'ast> for RustVisitor<'_> {
     fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
-        self.add_symbol(Symbol {
+        self.add_symbol(Sym {
             id: 0,
             scope: 0,
             owner: 0,
@@ -78,7 +78,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
         visit::visit_item_struct(self, node);
     }
     fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
-        self.add_symbol(Symbol {
+        self.add_symbol(Sym {
             id: 0,
             scope: 0,
             owner: 0,
@@ -96,7 +96,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
         visit::visit_item_trait(self, node);
     }
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        self.add_symbol(Symbol {
+        self.add_symbol(Sym {
             id: 0,
             scope: 0,
             owner: 0,
@@ -115,7 +115,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
     }
 
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        self.add_symbol(Symbol {
+        self.add_symbol(Sym {
             id: 0,
             scope: 0,
             owner: 0,
@@ -134,7 +134,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
         visit::visit_item_fn(self, node);
     }
     fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
-        self.add_symbol(Symbol {
+        self.add_symbol(Sym {
             id: 0,
             scope: 0,
             owner: 0,
@@ -151,7 +151,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
 
     fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
         let name = node.to_token_stream().to_string();
-        self.add_symbol(Symbol {
+        self.add_symbol(Sym {
             id: 0,
             scope: 0,
             owner: 0,
@@ -167,7 +167,7 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
     }
     fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
         let name = node.self_ty.to_token_stream().to_string();
-        let impl_id = self.add_symbol(Symbol {
+        let impl_id = self.add_symbol(Sym {
             id: 0,
             scope: 0,
             owner: 0,

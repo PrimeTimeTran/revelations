@@ -243,7 +243,7 @@ use crate::{_scope::*, ir::*};
 use std::collections::HashMap;
 
 pub struct SemanticWorkspace {
-    pub symbols: HashMap<SymId, Symbol>,
+    pub symbols: HashMap<SymId, Sym>,
     pub scopes: HashMap<ScopeId, Scope>,
     // indexes
     pub symbols_by_name: HashMap<String, Vec<SymId>>,

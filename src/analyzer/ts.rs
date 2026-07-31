@@ -34,7 +34,7 @@ pub struct TypeScriptAnalyzer;
 
 struct TsVisitor<'a> {
     options: &'a AnalyzerOptions,
-    pub symbols: Vec<Symbol>,
+    pub symbols: Vec<Sym>,
 }
 
 impl<'a> TsVisitor<'a> {

@@ -13,7 +13,7 @@ pub type SymId = u32;
 //     pub children: Vec<SymId>,
 // }
 #[derive(Clone, Debug)]
-pub struct Symbol {
+pub struct Sym {
     pub id: SymId,
     pub name: String,
     pub kind: SymbolKind,
@@ -23,7 +23,7 @@ pub struct Symbol {
     pub children: Vec<SymId>,
     pub scope: ScopeId,
 }
-impl Symbol {
+impl Sym {
     pub fn new(
         name: impl Into<String>,
         kind: SymbolKind,
@@ -46,7 +46,7 @@ impl Symbol {
         }
     }
 }
-impl Symbol {
+impl Sym {
     // 1. Top down init workspace analysis
     pub fn workspace(owner: SymId, name: impl Into<String>) -> Self {
         Self {

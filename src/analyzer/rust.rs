@@ -51,7 +51,7 @@ impl RustAnalyzer {
             }
             let (source, ast) = self.build_source(path.clone());
             let file_id = workspace.add_symbol(
-                Symbol::file(
+                Sym::file(
                     0,
                     file.file_name()
                         .unwrap_or_default()
@@ -88,7 +88,7 @@ impl RustAnalyzer {
         self.build_workspace(options, path.clone());
         let mut workspace = Workspace::new();
         let file_id = workspace.add_symbol(
-            Symbol::file(
+            Sym::file(
                 0,
                 path.file_name()
                     .unwrap_or_default()
@@ -160,7 +160,7 @@ impl RustAnalyzer {
         let (source, ast) = self.build_source(path.clone());
         let mut workspace = Workspace::new();
         let file_id = workspace.add_symbol(
-            Symbol::file(
+            Sym::file(
                 0,
                 path.file_name()
                     .unwrap_or_default()
@@ -261,7 +261,7 @@ impl RustAnalyzer {
 #[derive(Clone, Debug)]
 pub struct Workspace {
     pub root: SymId,
-    pub symbols: Vec<Symbol>,
+    pub symbols: Vec<Sym>,
     pub files: Vec<SymId>,
     pub packages: Vec<SymId>,
     pub modules: Vec<SymId>,
@@ -277,17 +277,17 @@ impl Workspace {
             files: Vec::new(),
             next_sym_id: 0,
         };
-        let root = workspace.add_symbol(Symbol::workspace(1, "workspace"), None);
+        let root = workspace.add_symbol(Sym::workspace(1, "workspace"), None);
         workspace.root = root;
         workspace
     }
-    pub fn get(&self, id: SymId) -> &Symbol {
+    pub fn get(&self, id: SymId) -> &Sym {
         &self.symbols[id as usize]
     }
-    pub fn get_mut(&mut self, id: SymId) -> &mut Symbol {
+    pub fn get_mut(&mut self, id: SymId) -> &mut Sym {
         &mut self.symbols[id as usize]
     }
-    pub fn add_symbol(&mut self, mut symbol: Symbol, parent: Option<SymId>) -> SymId {
+    pub fn add_symbol(&mut self, mut symbol: Sym, parent: Option<SymId>) -> SymId {
         let id = self.next_sym_id;
         self.next_sym_id += 1;
         symbol.id = id;
@@ -618,7 +618,7 @@ pub enum NodeContext {
     Identifier,
     Unknown,
 }
-pub fn resolve_target_at_position(
+pub fn resolve_node_at_position(
     syntax_tree: &syn::File,
     source: &str,
     options: &AnalyzerOptions,

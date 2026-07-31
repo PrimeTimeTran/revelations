@@ -13,7 +13,7 @@ use crate::{_scope::*, ir::*};
 /// for any cargo command to work. If we init a crate inside of a crate, and do not add it to the ./Cargo.toml
 /// running cargo check will throw an error.
 pub struct SemanticWorkspace {
-    pub symbols: HashMap<SymId, Symbol>,
+    pub symbols: HashMap<SymId, Sym>,
     pub scopes: HashMap<ScopeId, Scope>,
     pub symbols_by_name: HashMap<String, Vec<SymId>>,
     pub symbols_by_scope: HashMap<ScopeId, Vec<SymId>>,
