@@ -3,24 +3,18 @@ use proc_macro2::Span;
 use quote::ToTokens;
 use regex_syntax::ast::Ast;
 use serde::{Deserialize, Serialize};
+use swc_core::common::LineCol;
 use std::{
     collections::HashMap,
     fs::read_to_string,
     path::{Path, PathBuf},
 };
-use swc_core::common::LineCol;
 use syn::{
     File, Ident,
     spanned::Spanned,
     visit::{self, Visit, visit_local},
     visit_mut::{self, VisitMut},
 };
-// struct ClickAnalysis {
-//     file_path: PathBuf,
-//     source: String,
-//     tree: SyntaxTree,
-//     position: Position,
-// }
 // 1. Click
 //    - file
 //    - line
@@ -74,80 +68,67 @@ use syn::{
 //       - show actions
 //    Webview:
 //       - show graph
-// pub fn analyze_ownership_on_click(
-//     file_path: &PathBuf,
-//     options: &AnalyzerOptions,
-// ) -> Result<OwnershipAnalysisResult, AnalysisError> {
-//     let source = load_source(file_path)?;
-// 1. Identify Subject
-//     let click = ClickContext::new(
-//         file_path,
-//         &source,
-//         options,
-//     );
-// 2.
-//     let ast = parse_source(&source)?;
-//     let subject = resolve_subject(
-//         &ast,
-//         &source,
-//         &click,
-//     )?;
-//     let scope = find_scope(
-//         &ast,
-//         &click,
-//     );
-//     let mut lines = collect_lines(
-//         &source,
-//         &scope,
-//     );
-//     let symbols = collect_symbols(
-//         &ast,
-//         &lines,
-//     );
-//     let relations = analyze_relationships(
-//         &subject,
-//         &symbols,
-//     );
-//     classify_lines(
-//         &mut lines,
-//         &subject,
-//         &relations,
-//     );
-//     Ok(build_analysis_result(
-//         click,
-//         subject,
-//         scope,
-//         lines,
-//         symbols,
-//         relations,
-//     ))
-// }
-// Click
-//  |
-// Resolve AST node
-//  |
-// Collect ancestors
-//  |
-// Classify node
-//  |
-// Build influence edges
-//  |
-// Traverse outward
-//  |
-// Highlight affected lines
-#[derive(Debug, Serialize)]
-pub enum NodeClassification {
-    Variable,
-    BinaryExpression,
-    Scope,
-    FunctionCall,
-    Literal,
-    VariableDeclaration,
-    Assignment,
-    Borrow,
-    Condition,
-    Unknown,
-}
+    // pub fn analyze_ownership_on_click(
+    //     file_path: &PathBuf,
+    //     options: &AnalyzerOptions,
+    // ) -> Result<OwnershipAnalysisResult, AnalysisError> {
+    //     let source = load_source(file_path)?;
+    // 1. Identify Subject
+    //     let click = ClickContext::new(
+    //         file_path,
+    //         &source,
+    //         options,
+    //     );
+    // 2. 
+    //     let ast = parse_source(&source)?;
+    //     let subject = resolve_subject(
+    //         &ast,
+    //         &source,
+    //         &click,
+    //     )?;
+    //     let scope = find_scope(
+    //         &ast,
+    //         &click,
+    //     );
+    //     let mut lines = collect_lines(
+    //         &source,
+    //         &scope,
+    //     );
+    //     let symbols = collect_symbols(
+    //         &ast,
+    //         &lines,
+    //     );
+    //     let relations = analyze_relationships(
+    //         &subject,
+    //         &symbols,
+    //     );
+    //     classify_lines(
+    //         &mut lines,
+    //         &subject,
+    //         &relations,
+    //     );
+    //     Ok(build_analysis_result(
+    //         click,
+    //         subject,
+    //         scope,
+    //         lines,
+    //         symbols,
+    //         relations,
+    //     ))
+    // }
+    // Click
+    //  |
+    // Resolve AST node
+    //  |
+    // Collect ancestors
+    //  |
+    // Classify node
+    //  |
+    // Build influence edges
+    //  |
+    // Traverse outward
+    //  |
+    // Highlight affected lines
 impl Workspace {
     fn print_click_analysis(
         context: &ClickContext,
@@ -160,35 +141,45 @@ impl Workspace {
         println!("COLUMN : {}", context.column);
         println!();
         println!("SOURCE:");
-        for (idx, source_line) in context.source.lines().enumerate() {
-            let line_number = idx + 1;
-            let labels: Vec<_> = symbols
-                .iter()
-                .filter(|s| s.line == line_number)
-                .map(|s| format!("{}:{:?}", s.name, s.role))
-                .collect();
-            match labels.is_empty() {
-                true => {
-                    println!("{:>4} | {}", line_number, source_line);
-                }
-                false => {
-                    println!(
-                        "{:>4} | {:<50} // {}",
-                        line_number,
-                        source_line,
-                        labels.join(", ")
-                    );
-                }
-            }
-            if line_number == context.line {
-                println!(
-                    "{:>width$}^ column {}",
-                    "",
-                    context.column,
-                    width = context.column as usize + 8
-                );
-            }
-        }
+        // for (idx, source_line) in context.source.lines().enumerate() {
+        //     let line_number = idx + 1;
+        //     let labels: Vec<_> = symbols
+        //         .iter()
+        //         .filter(|s| s.line == line_number)
+        //         .map(|s| {
+        //             format!(
+        //                 "{}:{:?}",
+        //                 s.name,
+        //                 s.role
+        //             )
+        //         })
+        //         .collect();
+        //     match labels.is_empty() {
+        //         true => {
+        //             println!(
+        //                 "{:>4} | {}",
+        //                 line_number,
+        //                 source_line
+        //             );
+        //         }
+        //         false => {
+        //             println!(
+        //                 "{:>4} | {:<50} // {}",
+        //                 line_number,
+        //                 source_line,
+        //                 labels.join(", ")
+        //             );
+        //         }
+        //     }
+        //     if line_number == context.line {
+        //         println!(
+        //             "{:>width$}^ column {}",
+        //             "",
+        //             context.column,
+        //             width = context.column as usize + 8
+        //         );
+        //     }
+        // }
         // if let Some(node_context) = &report.node_context {
         //     println!();
         //     print_node_context(
@@ -196,202 +187,156 @@ impl Workspace {
         //         LineKind::Cursor,
         //     );
         // }
-        println!("===============================================");
+        // println!("===============================================");
     }
-    fn find_parent_node(nodes: &[AstNode], line: usize) -> Option<NodeContext> {
+    fn find_parent_node(
+        nodes: &[AstNode],
+        line: usize,
+    ) -> Option<NodeContext> {
         todo!("")
     }
-    fn node_to_context(nodes: &AstNode) -> Option<NodeContext> {
+    fn node_to_context(
+        nodes: &AstNode,
+    ) -> Option<NodeContext> {
         todo!("")
     }
-    fn find_node_at(nodes: &[AstNode], line: usize, column: usize) -> Option<&AstNode> {
+    fn find_node_at(
+        nodes: &[AstNode],
+        line: usize,
+        column: usize,
+    ) -> Option<&AstNode> {
         todo!("")
     }
-    fn find_node_on_line(nodes: &[AstNode], line: usize) -> Option<&AstNode> {
-        nodes
-            .iter()
-            .filter(|node| node.start_line <= line && line <= node.end_line)
-            .min_by_key(|node| node.end_line - node.start_line)
+    fn find_node_on_line(
+        nodes: &[AstNode],
+        line: usize,
+    ) -> Option<&AstNode> {
+        nodes.iter()
+            .filter(|node| {
+                node.start_line <= line &&
+                line <= node.end_line
+            })
+            .min_by_key(|node| {
+                node.end_line - node.start_line
+            })
     }
     fn collect_nodes(ast: &syn::File) -> Vec<AstNode> {
         let mut collector = NodeCollector::new();
         collector.visit_file(ast);
         collector.nodes
     }
-    fn resolve_click(ast: &syn::File, context: &ClickContext) -> Option<NodeContext> {
+    fn resolve_click(
+        ast: &syn::File,
+        context: &ClickContext,
+    ) -> Option<NodeContext> {
         let nodes = Self::collect_nodes(ast);
-        if let Some(node) = Self::find_node_at(&nodes, context.line, context.column) {
+        if let Some(node) = Self::find_node_at(
+            &nodes,
+            context.line,
+            context.column,
+        ) {
             return Some(Self::node_to_context(node).unwrap());
         }
-        if let Some(node) = Self::find_node_on_line(&nodes, context.line) {
+        if let Some(node) = Self::find_node_on_line(
+            &nodes,
+            context.line,
+        ) {
             return Some(Self::node_to_context(node).unwrap());
         }
-        Self::find_parent_node(&nodes, context.line)
+        Self::find_parent_node(
+            &nodes,
+            context.line,
+        )
     }
     fn analyze_click(
         ast: &syn::File,
         context: ClickContext,
         symbols: Vec<LineSymbol>,
     ) -> ClickReport {
-        let node_context = Some(Self::resolve_node_context(
-            ast,
-            context.line,
-            context.column,
-        ));
+        let node_context = Some(
+            Self::resolve_node_context(
+                ast,
+                context.line,
+                context.column,
+            )
+        );
         ClickReport {
             context,
             symbols,
             node_context,
         }
     }
-
-    fn resolve_node(
+    fn resolve_node_context(
         syntax_tree: &syn::File,
-        options: &AnalyzerOptions,
-    ) -> Result<NodeContext, AnalysisError> {
-        let line = options
-            .line
-            .ok_or_else(|| AnalysisError::Parse("missing line".into()))?;
-
-        let column = options
-            .column
-            .ok_or_else(|| AnalysisError::Parse("missing column".into()))?;
-
-        Ok(Self::resolve_node_context(
-            syntax_tree,
-            line as usize,
-            column as usize,
-        ))
-    }
-    fn resolve_node_context(syntax_tree: &syn::File, line: usize, column: usize) -> NodeContext {
+        line: usize,
+        column: usize,
+    ) -> NodeContext {
+        // use std::convert::TryFrom;
+        // let my_usize: usize = 42;
+        // // Returns a Result<u32, TryFromIntError>
+        // match u32::try_from(my_usize) {
+        //     Ok(val) => println!("Success: {val}"),
+        //     Err(_) => println!("Value is too large to fit into a u32!"),
+        // }
+        // let my_u32 = u32::try_from(my_usize).expect("usize exceeded u32 capacity");
         let mut resolver = NodeResolver {
-            position: pos(line, column),
+            line: u32::try_from(line).expect("usize exceeded u32 capacity"),
+            column: u32::try_from(column).expect("usize exceeded u32 capacity"),
             nodes: Vec::new(),
-            ancestors: Vec::new(),
-            best: None,
-            line,
-            column,
             candidates: Vec::new(),
         };
-        println!("Candidates:");
-        for c in &resolver.candidates {
-            println!("  {:?}", c);
-        }
         resolver.visit_file(syntax_tree);
         let mut candidates = resolver.candidates;
         candidates.sort_by_key(|node| {
             let start = node.span.start();
             let end = node.span.end();
-            (end.line - start.line, end.column - start.column)
+            (
+                end.line - start.line,
+                end.column - start.column,
+            )
         });
         NodeContext {
             subject: candidates.first().cloned(),
             ancestors: candidates,
         }
     }
-    fn classify_node(context: &NodeContext) -> NodeClassification {
-        let Some(subject) = &context.subject else {
-            return NodeClassification::Unknown;
+    fn resolve_subject(options: &AnalyzerOptions, syntax_tree: &File) {
+        let mut resolver = NodeResolver {
+            line: options.line.unwrap(),
+            column: options.column.unwrap(),
+            candidates: Vec::new(),
+            nodes: Vec::new(),
         };
-
-        match subject.kind {
-            AstNodeKind::Path => {
-                // foo, x, variable references
-                NodeClassification::Variable
-            }
-
-            AstNodeKind::Literal => NodeClassification::Literal,
-
-            AstNodeKind::CallExpr => NodeClassification::FunctionCall,
-
-            AstNodeKind::BinaryExpr => NodeClassification::BinaryExpression,
-
-            AstNodeKind::Local => NodeClassification::VariableDeclaration,
-
-            AstNodeKind::IfExpr => NodeClassification::Condition,
-
-            AstNodeKind::Block => NodeClassification::Scope,
-
-            _ => NodeClassification::Unknown,
-        }
-    }
-    // fn resolve_subject(
-    //     options: &AnalyzerOptions,
-    //     syntax_tree: &File,
-    // ) -> Result<NodeContext, AnalysisError> {
-    //     let mut resolver = NodeResolver {
-    //         line: options.line.unwrap(),
-    //         column: options.column.unwrap(),
-    //         candidates: Vec::new(),
-    //         nodes: Vec::new(),
-    //         ancestors: Vec::new(),
-    //         best: None,
-    //     };
-    //     resolver.visit_file(&syntax_tree);
-    //     let node = resolver.resolve();
-    //     Ok(node)
-    // }
-    fn parse_file(file_path: &PathBuf) -> Result<(String, syn::File), AnalysisError> {
-        let source =
-            std::fs::read_to_string(file_path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
-        let syntax_tree =
-            syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
-        Ok((source, syntax_tree))
+        resolver.visit_file(&syntax_tree);
+        let node = resolver.resolve();
     }
     pub fn analyze_ownership_on_click(
         file_path: &PathBuf,
         options: &AnalyzerOptions,
-    ) -> Result<AnalysisReport, AnalysisError> {
-        let (source, syntax_tree) = Self::parse_file(file_path)?;
+    ) -> Result<Vec<LineRelated>, AnalysisError> {
+        let source =
+            std::fs::read_to_string(file_path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
         let click = ClickContext::new(file_path, &source, options);
-        let context = Self::resolve_node(&syntax_tree, options)?;
-        let classification = Self::classify_node(&context);
-
-        println!("CLICK:");
-        println!("  file: {:?}", file_path);
-        println!("  line: {:?}", options.line);
-        println!("  column: {:?}", options.column);
-
-        let context = Self::resolve_node(&syntax_tree, options)?;
-
-        println!("SUBJECT:");
-        match &context.subject {
-            Some(node) => println!("{:#?}", node),
-            None => println!("NONE"),
-        }
-
-        println!("\nANCESTORS:");
-        for ancestor in &context.ancestors {
-            println!("{:?}", ancestor.kind);
-        }
-
-        println!("\nNODE CONTEXT:");
-        println!("{:#?}", context);
-
-        let classification = Self::classify_node(&context);
-
-        println!("\nCLASSIFICATION:");
-        println!("{:#?}", classification);
-        // Ok(Vec::new())
-
+        resolve_click_context(options, &source);
         let syntax_tree = Self::parse_source(&source)?;
         let kind = classify_line(&syntax_tree, options.line.unwrap());
-        // let node_context = Self::resolve_subject(options, &syntax_tree)?;
-        // let classification = Self::classify_node(&node_context);
-        let resolved: Result<(String, rust::NodeContext), AnalysisError> =
-            resolve_node_at_position(&syntax_tree, &source, options);
-        // let item = Self::resolve_subject(options, &syntax_tree);
-        let node_context = match Self::resolve_node(&syntax_tree, options) {
-            Ok(context) => context,
-            Err(_) => {
-                return Err(
-                    AnalysisError::Parse(
-                        "Failed to resolve node at position".into()
-                    )
-                );
+        println!("LINE KIND: {:?}", kind);
+        let context = Self::resolve_node_context(&syntax_tree, options.line.unwrap() as usize, options.column.unwrap() as usize);
+        println!("CLICK AST:");
+        let node_context = Self::resolve_node_context(&syntax_tree,  options.line.unwrap() as usize, options.column.unwrap() as usize);
+        for node in &context.ancestors {
+            println!("  {:?}", node);
+        }
+        let resolved: Result<(String, rust::NodeContext), AnalysisError> = resolve_node_at_position(&syntax_tree, &source, options);
+        let item = Self::resolve_subject(options, &syntax_tree);
+        let (subject, node_context) = match resolved {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("[RESOLVER FAILED] {:?}", err);
+                print_final_analysis(&click, None);
+                return Ok(Vec::new());
             }
         };
-
         let mut workspace = Workspace::new();
         let file_id = workspace.add_symbol(
             Sym::file(
@@ -405,14 +350,6 @@ impl Workspace {
             Some(workspace.root),
         );
         workspace.files.push(file_id);
-        let subject = node_context
-            .subject
-            .clone()
-            .ok_or_else(|| {
-                AnalysisError::Parse(
-                    "No subject node found at position".into()
-                )
-            })?;
         let mut ownership_visitor = OwnershipVisitor {
             subject,
             scope_spans: Vec::new(),
@@ -420,7 +357,6 @@ impl Workspace {
             related_spans: Vec::new(),
             related_symbols: Vec::new(),
         };
-        
         ownership_visitor.visit_file(&syntax_tree);
         // 5. Map the collected spans back to exact line numbers using the source text
         // let mut related_lines: Vec<LineRelated> = ownership_visitor
@@ -478,20 +414,9 @@ impl Workspace {
             );
         }
         let analysis = related_lines;
-        let analysis = AnalysisData {
-            related_lines: analysis,
-            node_context: context.clone(),
-            classification: classification,
-            symbols: Vec::new(),
-        };
-        let report = AnalysisReport {
-            click,
-            analysis
-        };
-        Ok(report)
-        
+        print_final_analysis(&click, None);
+        Ok(analysis)
     }
-
     fn find_scope_at_position(
         syntax_tree: &syn::File,
         options: &AnalyzerOptions,
@@ -549,7 +474,11 @@ impl Workspace {
     fn build_indexes(&self, node: &syn::File) {
         todo!("run_checks")
     }
-    fn analyze(&self, ast: &syn::File, context: ClickContext) {
+    fn analyze(
+        &self,
+        ast: &syn::File,
+        context: ClickContext,
+    ) {
         todo!("");
         // let symbols = self.collect_symbols(ast);
         // self.run_checks(ast);
@@ -621,7 +550,7 @@ struct SymNode {
     pub role: SymRole,
     pub location: SymLocation,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub enum SymRole {
     Declaration,
     Reference,
@@ -667,8 +596,8 @@ pub enum RelationKind {
     References,
     Calls,
 }
-#[derive(Clone, Debug, Serialize)]
-pub enum InfluenceKind {
+#[derive(Debug, Clone)]
+pub  enum InfluenceKind {
     Declaration,
     Assignment,
     Borrow,
@@ -820,19 +749,6 @@ fn print_node_context(node_context: &NodeContext, kind: LineKind) {
 //     }
 //     true
 // }
-fn same_span(a: proc_macro2::Span, b: proc_macro2::Span) -> bool {
-    let a_start = a.start();
-    let a_end = a.end();
-
-    let b_start = b.start();
-    let b_end = b.end();
-
-    a_start.line == b_start.line
-        && a_start.column == b_start.column
-        && a_end.line == b_end.line
-        && a_end.column == b_end.column
-}
-
 struct ResolvedSubject {
     pub name: String,
     pub kind: NodeContext,
@@ -896,7 +812,6 @@ pub struct LineAnnotation {
     pub line: usize,
     pub text: String,
 }
-#[derive(Serialize)]
 pub struct LineSymbol {
     pub line: usize,
     pub name: String,
@@ -992,7 +907,6 @@ fn span_contains_line(span: proc_macro2::Span, line: u32) -> bool {
     let end = span.end().line as u32;
     line >= start && line <= end
 }
-#[derive(Serialize)]
 pub struct ClickContext {
     pub file: PathBuf,
     pub line: usize,
@@ -1012,21 +926,21 @@ impl ClickContext {
             source: source.to_string(),
         }
     }
-    // pub fn print_cursor(&self) {
-    //     let line_idx = self.line.saturating_sub(1) as usize;
-    //     let Some(source_line) = self.source.lines().nth(line_idx) else {
-    //         return;
-    //     };
-    //     println!("SOURCE:");
-    //     println!("{:>4} | {}", self.line, source_line);
-    //     let padding = " ".repeat(self.column as usize);
-    //     println!(
-    //         "     | {}^ (column {}, char {:?})",
-    //         padding,
-    //         self.column,
-    //         source_line.chars().nth(self.column as usize)
-    //     );
-    // }
+    pub fn print_cursor(&self) {
+        let line_idx = self.line.saturating_sub(1) as usize;
+        let Some(source_line) = self.source.lines().nth(line_idx) else {
+            return;
+        };
+        println!("SOURCE:");
+        println!("{:>4} | {}", self.line, source_line);
+        let padding = " ".repeat(self.column as usize);
+        println!(
+            "     | {}^ (column {}, char {:?})",
+            padding,
+            self.column,
+            source_line.chars().nth(self.column as usize)
+        );
+    }
 }
 #[derive(Debug, Clone)]
 pub struct AstNode {
@@ -1038,13 +952,12 @@ pub struct AstNode {
     pub end_line: usize,
     pub end_col: usize,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AstNodeKind {
     // Identifiers / symbols
     Identifier,
     Binding,
     // Values
-    PatternIdentifier,
     Literal,
     // Expressions
     BinaryExpr,
@@ -1081,54 +994,27 @@ pub enum AstNodeKind {
     // Fallback
     Unknown,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Clone)]
 pub struct ResolvedNode {
     pub kind: AstNodeKind,
-
-    #[serde(skip)]
     pub span: proc_macro2::Span,
 }
 pub struct NodeResolver {
-    pub line: usize,
-    pub column: usize,
-    position: SourcePosition,
+    pub line: u32,
+    pub column: u32,
     pub candidates: Vec<ResolvedNode>,
-    pub best: Option<NodeContext>,
-    // pub candidates: Vec<ResolvedNode>,
     pub nodes: Vec<AstNodeKind>,
-    pub ancestors: Vec<AstNodeKind>,
 }
 impl NodeResolver {
-    fn contains(&self, span: Span) -> bool {
-        let ((start_line, start_column), (end_line, end_column)) = line_col(span);
-
-        println!(
-            "CHECK {}:{} -> {}:{} AGAINST {}:{}",
-            start_line, start_column, end_line, end_column, self.line, self.column
-        );
-
-        let after_start =
-            self.line > start_line || (self.line == start_line && self.column >= start_column);
-
-        let before_end =
-            self.line < end_line || (self.line == end_line && self.column <= end_column);
-
-        after_start && before_end
+    fn contains(&self, span: proc_macro2::Span) -> bool {
+        let start = span.start();
+        let end = span.end();
+        self.line >= start.line as u32 && self.line <= end.line as u32
     }
 }
 impl NodeResolver {
     fn check(&mut self, kind: AstNodeKind, span: proc_macro2::Span) {
-        let start = span.start();
-        let end = span.end();
-
-        println!(
-            "{:?}: {}:{} -> {}:{} | CLICK {}:{}",
-            kind, start.line, start.column, end.line, end.column, self.line, self.column
-        );
-
-        if self.contains(span) {
-            println!("  ✅ MATCH");
-
+        if span_contains_position(span, self.line, self.column) {
             self.candidates.push(ResolvedNode { kind, span });
         }
     }
@@ -1146,20 +1032,6 @@ impl NodeResolver {
     }
 }
 impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
-    fn visit_pat_ident(&mut self, node: &'ast syn::PatIdent) {
-        self.check(AstNodeKind::PatternIdentifier, node.span());
-        println!("PAT IDENT 1 {:?}", node.ident);
-        syn::visit::visit_pat_ident(self, node);
-        println!("PAT IDENT {:?}", node.ident);
-    }
-    fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
-        self.check(AstNodeKind::Path, node.span());
-        syn::visit::visit_expr_path(self, node);
-    }
-    fn visit_local(&mut self, node: &'ast syn::Local) {
-        self.check(AstNodeKind::Local, node.span());
-        syn::visit::visit_local(self, node);
-    }
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
         if self.contains(node.span()) {
             self.nodes.push(AstNodeKind::Function);
@@ -1172,18 +1044,12 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
         }
         syn::visit::visit_block(self, node);
     }
-    // fn visit_local(&mut self, node: &'ast syn::Local) {
-    //     let span = node
-    //         .init
-    //         .as_ref()
-    //         .map(|init| init.expr.span())
-    //         .unwrap_or(node.span());
-
-    //     if self.contains(span) {
-    //         self.nodes.push(AstNodeKind::Local);
-    //     }
-    //     syn::visit::visit_local(self, node);
-
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+        if self.contains(node.span()) {
+            self.nodes.push(AstNodeKind::Local);
+        }
+        syn::visit::visit_local(self, node);
+    }
     fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
         if self.contains(node.span()) {
             self.nodes.push(AstNodeKind::BinaryExpr);
@@ -1202,7 +1068,10 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
         }
         syn::visit::visit_expr_call(self, node);
     }
-
+    fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
+        self.check(AstNodeKind::Path, node.span());
+        syn::visit::visit_expr_path(self, node);
+    }
     fn visit_expr_lit(&mut self, node: &'ast syn::ExprLit) {
         if self.contains(node.span()) {
             self.nodes.push(AstNodeKind::Literal);
@@ -1245,14 +1114,18 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
     //     syn::visit::visit_local(self, node);
     // }
 }
-
+#[derive(Debug, Clone)]
+pub struct NodeContext {
+    pub subject: Option<ResolvedNode>,
+    pub ancestors: Vec<ResolvedNode>,
+}
 impl NodeContext {
-    // pub fn print_tree(&self) {
-    //     for node in &self.ancestors {
-    //         let start = node.span.start();
-    //         println!("{:?} @ {}:{}", node.kind, start.line, start.column);
-    //     }
-    // }
+    pub fn print_tree(&self) {
+        for node in &self.ancestors {
+            let start = node.span.start();
+            println!("{:?} @ {}:{}", node.kind, start.line, start.column);
+        }
+    }
 }
 #[derive(Debug, Clone)]
 pub enum NodeGoal {
@@ -1329,8 +1202,7 @@ pub enum OwnershipRelation {
 }
 #[derive(Debug, Clone)]
 pub struct OwnershipVisitor {
-    // pub subject: String,
-    subject: ResolvedNode,
+    pub subject: String,
     pub options: AnalyzerOptions,
     pub related_spans: Vec<proc_macro2::Span>,
     pub scope_spans: Vec<proc_macro2::Span>,
@@ -1349,9 +1221,8 @@ pub struct OwnershipVisitor {
 // - Scope:
 impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        if self.subject.kind == AstNodeKind::Function
-            && same_span(node.sig.ident.span(), self.subject.span)
-        {
+        let name = node.sig.ident.to_string();
+        if name == self.subject {
             self.scope_spans.push(node.span());
         }
         syn::visit::visit_item_fn(self, node);
@@ -1365,25 +1236,32 @@ impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
     }
     fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
         let span = node.span();
-    
-        if let Some(segment) = node.path.segments.last() {
-            let name = segment.ident.to_string();
-    
-            if self.subject.kind == AstNodeKind::Path
-                && same_span(span, self.subject.span)
-            {
-                eprintln!("CLICKED PATH: {}", name);
-            }
-    
-            self.related_spans.push(span);
-    
-            self.related_symbols.push(SymReference {
-                name,
+        // Phase 1: if we haven't resolved a subject yet,
+        // check if this AST node contains the cursor.
+        if self.subject.is_empty()
+            && span_contains_position(
                 span,
-                role: SymRole::Reference,
-            });
+                self.options.line.unwrap_or(0),
+                self.options.column.unwrap_or(0),
+            )
+        {
+            if let Some(segment) = node.path.segments.last() {
+                let name = segment.ident.to_string();
+                eprintln!("RESOLVED SUBJECT: {} at {:?}", name, span);
+                self.subject = name;
+            }
         }
-    
+        // Phase 2: once we have a subject, collect references.
+        if let Some(segment) = node.path.segments.last() {
+            if segment.ident.to_string() == self.subject {
+                self.related_spans.push(span);
+                self.related_symbols.push(SymReference {
+                    name: segment.ident.to_string(),
+                    span,
+                    role: SymRole::Reference,
+                });
+            }
+        }
         visit::visit_expr_path(self, node);
     }
     fn visit_local(&mut self, node: &'ast syn::Local) {
@@ -1425,10 +1303,16 @@ pub struct ClickReport {
     pub node_context: Option<NodeContext>,
 }
 pub fn print_click_report(report: &ClickReport) {
-    print_final_analysis(&report.context, Some(&report.symbols));
+    print_final_analysis(
+        &report.context,
+        Some(&report.symbols),
+    );
     if let Some(node_context) = &report.node_context {
         println!();
-        print_node_context(node_context, LineKind::Cursor);
+        print_node_context(
+            node_context,
+            LineKind::Cursor,
+        );
     }
 }
 pub struct NodeCollector {
@@ -1436,7 +1320,9 @@ pub struct NodeCollector {
 }
 impl NodeCollector {
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            nodes: Vec::new(),
+        }
     }
 }
 impl<'ast> Visit<'ast> for NodeCollector {
@@ -1470,106 +1356,4 @@ impl<'ast> Visit<'ast> for NodeCollector {
         });
         visit::visit_expr_call(self, node);
     }
-}
-
-use syn::Token;
-use syn::token::Token;
-
-pub struct Expr;
-pub struct LocalInit {
-    pub eq_token: Token![=],
-    pub expr: Box<Expr>,
-    pub diverge: Option<(Token![else], Box<Expr>)>,
-}
-#[inline]
-fn line_col2(span: proc_macro2::Span) -> ((u32, u32), (u32, u32)) {
-    let start = span.start();
-    let end = span.end();
-    (
-        (start.line as u32, start.column as u32),
-        (end.line as u32, end.column as u32),
-    )
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SourcePosition {
-    pub line: u32,
-    pub column: u32,
-}
-impl From<proc_macro2::LineColumn> for SourcePosition {
-    fn from(pos: proc_macro2::LineColumn) -> Self {
-        Self {
-            line: pos.line as u32,
-            column: pos.column as u32,
-        }
-    }
-}
-#[inline]
-fn line_col(span: Span) -> ((usize, usize), (usize, usize)) {
-    let start = span.start();
-    let end = span.end();
-
-    ((start.line, start.column), (end.line, end.column))
-}
-#[inline]
-fn pos(line: usize, column: usize) -> SourcePosition {
-    SourcePosition {
-        line: line as u32,
-        column: column as u32,
-    }
-}
-
-pub struct OwnershipAnalysis {
-    pub related_lines: Vec<LineRelated>,
-    pub click: ClickContext,
-    pub node_context: NodeContext,
-    pub classification: NodeClassification,
-    pub symbols: Vec<LineSymbol>,
-}
-
-
-
-// #[derive(Serialize)]
-// pub struct AnalysisReport {
-//     pub related_lines: Vec<LineRelated>,
-//     pub click: ClickContext,
-//     pub node_context: Option<NodeContext>,
-//     pub classification: Option<NodeClassification>,
-//     pub symbols: Vec<LineSymbol>,
-//     pub node: Option<ResolvedNode>,
-// }
-#[derive(Debug, Clone, Serialize)]
-pub struct NodeContext {
-    pub subject: Option<ResolvedNode>,
-    pub ancestors: Vec<ResolvedNode>,
-}
-#[derive(Serialize)]
-pub struct AnalysisReport {
-    pub click: ClickContext,
-    pub analysis: AnalysisData,
-}
-#[derive(Serialize)]
-pub struct AnalysisData {
-    pub related_lines: Vec<LineRelated>,
-    pub node_context: NodeContext,
-    pub classification: NodeClassification,
-    pub symbols: Vec<LineSymbol>,
-}
-
-// #[derive(Debug, Clone, Serialize)]
-// pub struct AnalysisReport2 {
-//     pub related_lines: Vec<LineRelated>,
-//     pub node_context: Option<NodeContext>,
-//     // pub click: ClickContext,
-//     // pub classification: Option<NodeClassification>,
-//     // pub symbols: Vec<LineSymbol>,
-// }
-
-#[derive(Serialize)]
-pub struct AnalysisReport2 {
-    pub click: ClickContext,
-    pub graph: Option<InfluenceKind>,
-    pub related_lines: Vec<LineRelated>,
-    pub node_context: Option<NodeContext>,
-    pub classification: Option<NodeClassification>,
-            pub symbols: Vec<LineSymbol>,
 }

@@ -700,7 +700,6 @@ pub fn resolve_node_at_position(
     Ok((ident, finder.found_context))
 }
 
-
 pub enum SymbolKindOutline {
     File = 1,
     Module = 2,
