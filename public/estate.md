@@ -16,7 +16,6 @@ The human is the continuous thread. The tools exist to preserve and amplify thei
   - remotes
 - People dont want to
   - think about fs
-  -
 
 **Solutions**
 
@@ -144,8 +143,8 @@ Core architecture for semantic workflow paradigms to be realized in other tools.
 ## .loi
 
 ---
-Heading in same file Same-file heading link
----
+
+## Heading in same file Same-file heading link
 
 - [[wikilinks]] Link to file
 - [[wikilinks|Display Text]] Custom display text
