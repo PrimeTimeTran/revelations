@@ -3,8 +3,11 @@ use std::fmt;
 #[derive(Debug)]
 pub enum AnalysisError {
     Parse(String),
-    UnsupportedLanguage(String),
     Io(String),
+    Json(String),
+    SerializationError(String),
+    UnsupportedLanguage(String),
+    IoError(String),
 }
 impl fmt::Display for AnalysisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -16,6 +19,15 @@ impl fmt::Display for AnalysisError {
                 write!(f, "unsupported language: {}", lang)
             }
             AnalysisError::Io(msg) => {
+                write!(f, "io error: {}", msg)
+            }
+            AnalysisError::Json(msg) => {
+                write!(f, "json error: {}", msg)
+            }
+            AnalysisError::SerializationError(msg) => {
+                write!(f, "serialization error: {}", msg)
+            }
+            AnalysisError::IoError(msg) => {
                 write!(f, "io error: {}", msg)
             }
         }

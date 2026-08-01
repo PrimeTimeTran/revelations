@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::read_to_string,
+    io::{self},
     path::{Path, PathBuf},
 };
+use std::{fmt::Write, io::Write as _};
 use swc_core::common::LineCol;
 use syn::{
     File, Ident,
@@ -135,19 +137,7 @@ use syn::{
 // Traverse outward
 //  |
 // Highlight affected lines
-#[derive(Debug, Serialize)]
-pub enum NodeClassification {
-    Variable,
-    BinaryExpression,
-    Scope,
-    FunctionCall,
-    Literal,
-    VariableDeclaration,
-    Assignment,
-    Borrow,
-    Condition,
-    Unknown,
-}
+
 impl Workspace {
     fn print_click_analysis(
         context: &ClickContext,
@@ -384,11 +374,9 @@ impl Workspace {
         let node_context = match Self::resolve_node(&syntax_tree, options) {
             Ok(context) => context,
             Err(_) => {
-                return Err(
-                    AnalysisError::Parse(
-                        "Failed to resolve node at position".into()
-                    )
-                );
+                return Err(AnalysisError::Parse(
+                    "Failed to resolve node at position".into(),
+                ));
             }
         };
 
@@ -408,11 +396,7 @@ impl Workspace {
         let subject = node_context
             .subject
             .clone()
-            .ok_or_else(|| {
-                AnalysisError::Parse(
-                    "No subject node found at position".into()
-                )
-            })?;
+            .ok_or_else(|| AnalysisError::Parse("No subject node found at position".into()))?;
         let mut ownership_visitor = OwnershipVisitor {
             subject,
             scope_spans: Vec::new(),
@@ -420,25 +404,7 @@ impl Workspace {
             related_spans: Vec::new(),
             related_symbols: Vec::new(),
         };
-        
         ownership_visitor.visit_file(&syntax_tree);
-        // 5. Map the collected spans back to exact line numbers using the source text
-        // let mut related_lines: Vec<LineRelated> = ownership_visitor
-        //     .related_spans
-        //     .iter()
-        //     .map(|span| LineRelated {
-        //         line: span.start().line,
-        //         file_path: file_path.clone(),
-        //         relation_type: OwnershipRelation::ImmutableBorrow,
-        //     })
-        //     .collect();
-        // if let Some(scope_span) = ownership_visitor.scope_spans.first() {
-        //     related_lines.push(LineRelated {
-        //         line: scope_span.start().line,
-        //         file_path: file_path.clone(),
-        //         relation_type: OwnershipRelation::Scope,
-        //     });
-        // }
         let scope = Self::find_scope_at_position(&syntax_tree, options);
         let mut related_lines: Vec<LineRelated> = Vec::new();
         fn add_relation(
@@ -457,7 +423,6 @@ impl Workspace {
                 });
             }
         }
-        // 1. Add scope lines
         if let Some(scope_span) = Self::find_scope_at_position(&syntax_tree, options) {
             for line in scope_span.start().line..=scope_span.end().line {
                 add_relation(
@@ -468,7 +433,6 @@ impl Workspace {
                 );
             }
         }
-        // 2. Add symbol influence/reference lines
         for span in ownership_visitor.related_spans {
             add_relation(
                 &mut related_lines,
@@ -477,19 +441,26 @@ impl Workspace {
                 OwnershipRelation::Reference,
             );
         }
-        let analysis = related_lines;
+        let analysis = related_lines.clone();
         let analysis = AnalysisData {
             related_lines: analysis,
             node_context: context.clone(),
             classification: classification,
             symbols: Vec::new(),
         };
+        let formatted_output = build_final_analysis(&click, Some(&related_lines));
+        eprintln!("{}", formatted_output);
         let report = AnalysisReport {
             click,
-            analysis
+            analysis,
+            formatted_output,
         };
+        let json_output = serde_json::to_string(&report)?;
+        let mut stdout = io::stdout();
+        stdout.write_all(json_output.as_bytes()).map_err(|e| AnalysisError::IoError(e.to_string()))?;
+        stdout.write_all(b"\n").map_err(|e| AnalysisError::IoError(e.to_string()))?;
+        stdout.flush().map_err(|e| AnalysisError::IoError(e.to_string()))?;
         Ok(report)
-        
     }
 
     fn find_scope_at_position(
@@ -637,45 +608,7 @@ pub enum SymRole {
     Expression,
 }
 struct SymLocation;
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum RelationKind {
-    // Structural
-    Contains,
-    DefinedIn,
-    DeclaredIn,
-    // Ownership
-    Owns,
-    OwnedBy,
-    MovesTo,
-    MovedFrom,
-    // Borrowing
-    BorrowOf,
-    BorrowedBy,
-    MutableBorrowOf,
-    ImmutableBorrowOf,
-    // Aliasing
-    AliasOf,
-    CloneOf,
-    // Data flow
-    AssignedFrom,
-    DerivedFrom,
-    DependsOn,
-    // Scope / visibility
-    VisibleIn,
-    CapturedBy,
-    // Usage
-    References,
-    Calls,
-}
-#[derive(Clone, Debug, Serialize)]
-pub enum InfluenceKind {
-    Declaration,
-    Assignment,
-    Borrow,
-    Move,
-    Mutation,
-    Alias,
-}
+
 // fn print_final_analysis(
 //     context: &ClickContext,
 //     node_context: Option<&NodeContext>,
@@ -731,77 +664,7 @@ pub enum InfluenceKind {
 //     }
 //     println!("============================================");
 // }
-fn print_final_analysis(context: &ClickContext, symbols: Option<&[LineSymbol]>) {
-    println!("================ CLICK CONTEXT ================");
-    println!("FILE   : {}", context.file.display());
-    println!("LINE   : {}", context.line);
-    println!("COLUMN : {}", context.column);
-    println!();
-    println!("SOURCE:");
-    let symbols = symbols.unwrap_or(&[]);
-    for (idx, source_line) in context.source.lines().enumerate() {
-        let line_number = idx + 1;
-        let labels: Vec<String> = symbols
-            .iter()
-            .filter(|s| s.line == line_number)
-            .map(|s| format!("{}:{:?}", s.name, s.role))
-            .collect();
-        if labels.is_empty() {
-            println!("{:>4} | {}", line_number, source_line);
-        } else {
-            println!(
-                "{:>4} | {:<50} // {}",
-                line_number,
-                source_line,
-                labels.join(", ")
-            );
-        }
-        // Always show cursor position
-        if line_number == context.line {
-            let prefix = format!("{:>4} | ", line_number);
-            println!(
-                "{}{}^ (column {})",
-                " ".repeat(prefix.len()),
-                " ".repeat(context.column as usize),
-                context.column
-            );
-        }
-    }
-    // In case the click line is outside the source range
-    if context.line > context.source.lines().count() {
-        println!();
-        println!(
-            "CLICK POSITION OUT OF RANGE: line {}, column {}",
-            context.line, context.column
-        );
-    }
-    println!("===============================================");
-}
-fn print_node_context(node_context: &NodeContext, kind: LineKind) {
-    println!("================ NODE CONTEXT =================");
-    if let Some(subject) = &node_context.subject {
-        println!(
-            "Subject: {:?} {:?} @ {}:{}",
-            subject.kind,
-            kind,
-            subject.span.start().line,
-            subject.span.start().column,
-        );
-    } else {
-        println!("SUBJECT: None");
-    }
-    println!("Line: {:?}", kind);
-    println!("Expansion:");
-    for (i, node) in node_context.ancestors.iter().enumerate() {
-        let start = node.span.start();
-        let end = node.span.end();
-        println!(
-            "{:>2}. {:?} [{}:{} -> {}:{}]",
-            i, node.kind, start.line, start.column, end.line, end.column,
-        );
-    }
-    println!("===============================================");
-}
+
 // fn span_contains_position(
 //     span: Span,
 //     line: u32,
@@ -820,7 +683,7 @@ fn print_node_context(node_context: &NodeContext, kind: LineKind) {
 //     }
 //     true
 // }
-fn same_span(a: proc_macro2::Span, b: proc_macro2::Span) -> bool {
+fn same_span(a: proc_macro2::Span, b: SerializableSpan) -> bool {
     let a_start = a.start();
     let a_end = a.end();
 
@@ -1081,13 +944,74 @@ pub enum AstNodeKind {
     // Fallback
     Unknown,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct SerializableSpan {
+    pub start_line: usize,
+    pub start_col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+}
+#[derive(Serialize, Debug, Clone)]
 pub struct ResolvedNode {
     pub kind: AstNodeKind,
-
-    #[serde(skip)]
-    pub span: proc_macro2::Span,
+    pub span: SerializableSpan,
 }
+impl From<proc_macro2::Span> for SerializableSpan {
+    fn from(span: proc_macro2::Span) -> Self {
+        let start = span.start();
+        let end = span.end();
+        Self {
+            start_line: start.line,
+            start_col: start.column,
+            end_line: end.line,
+            end_col: end.column,
+        }
+    }
+}
+impl From<serde_json::Error> for AnalysisError {
+    fn from(err: serde_json::Error) -> Self {
+        // AnalysisError::SerializationError(err.to_string())
+        // AnalysisError::Json(err.to_string())
+        AnalysisError::IoError(err.to_string())
+    }
+}
+// impl SerializableSpan {
+//     pub fn start(&self) -> (usize, usize) {
+//         (self.start_line, self.start_col)
+//     }
+
+//     pub fn end(&self) -> (usize, usize) {
+//         (self.end_line, self.end_col)
+//     }
+// }
+impl SerializableSpan {
+    pub fn start(&self) -> DummyLineColumn {
+        DummyLineColumn {
+            line: self.start_line,
+            column: self.start_col,
+        }
+    }
+
+    pub fn end(&self) -> DummyLineColumn {
+        DummyLineColumn {
+            line: self.end_line,
+            column: self.end_col,
+        }
+    }
+}
+
+// Mimics proc_macro2::LineColumn interface
+pub struct DummyLineColumn {
+    pub line: usize,
+    pub column: usize,
+}
+
+// #[derive(Clone, Debug, Serialize)]
+// pub struct ResolvedNode {
+//     pub kind: AstNodeKind,
+//     #[serde(skip)]
+//     pub span: proc_macro2::Span,
+// }
 pub struct NodeResolver {
     pub line: usize,
     pub column: usize,
@@ -1129,7 +1053,10 @@ impl NodeResolver {
         if self.contains(span) {
             println!("  ✅ MATCH");
 
-            self.candidates.push(ResolvedNode { kind, span });
+            self.candidates.push(ResolvedNode {
+                kind,
+                span: span.into(),
+            });
         }
     }
     pub fn resolve(mut self) -> NodeContext {
@@ -1365,25 +1292,23 @@ impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
     }
     fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
         let span = node.span();
-    
+
         if let Some(segment) = node.path.segments.last() {
             let name = segment.ident.to_string();
-    
-            if self.subject.kind == AstNodeKind::Path
-                && same_span(span, self.subject.span)
-            {
+
+            if self.subject.kind == AstNodeKind::Path && same_span(span, self.subject.span) {
                 eprintln!("CLICKED PATH: {}", name);
             }
-    
+
             self.related_spans.push(span);
-    
+
             self.related_symbols.push(SymReference {
                 name,
                 span,
                 role: SymRole::Reference,
             });
         }
-    
+
         visit::visit_expr_path(self, node);
     }
     fn visit_local(&mut self, node: &'ast syn::Local) {
@@ -1423,13 +1348,6 @@ pub struct ClickReport {
     pub context: ClickContext,
     pub symbols: Vec<LineSymbol>,
     pub node_context: Option<NodeContext>,
-}
-pub fn print_click_report(report: &ClickReport) {
-    print_final_analysis(&report.context, Some(&report.symbols));
-    if let Some(node_context) = &report.node_context {
-        println!();
-        print_node_context(node_context, LineKind::Cursor);
-    }
 }
 pub struct NodeCollector {
     pub nodes: Vec<AstNode>,
@@ -1526,17 +1444,6 @@ pub struct OwnershipAnalysis {
     pub symbols: Vec<LineSymbol>,
 }
 
-
-
-// #[derive(Serialize)]
-// pub struct AnalysisReport {
-//     pub related_lines: Vec<LineRelated>,
-//     pub click: ClickContext,
-//     pub node_context: Option<NodeContext>,
-//     pub classification: Option<NodeClassification>,
-//     pub symbols: Vec<LineSymbol>,
-//     pub node: Option<ResolvedNode>,
-// }
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeContext {
     pub subject: Option<ResolvedNode>,
@@ -1546,6 +1453,7 @@ pub struct NodeContext {
 pub struct AnalysisReport {
     pub click: ClickContext,
     pub analysis: AnalysisData,
+    pub formatted_output: String,
 }
 #[derive(Serialize)]
 pub struct AnalysisData {
@@ -1555,15 +1463,6 @@ pub struct AnalysisData {
     pub symbols: Vec<LineSymbol>,
 }
 
-// #[derive(Debug, Clone, Serialize)]
-// pub struct AnalysisReport2 {
-//     pub related_lines: Vec<LineRelated>,
-//     pub node_context: Option<NodeContext>,
-//     // pub click: ClickContext,
-//     // pub classification: Option<NodeClassification>,
-//     // pub symbols: Vec<LineSymbol>,
-// }
-
 #[derive(Serialize)]
 pub struct AnalysisReport2 {
     pub click: ClickContext,
@@ -1571,5 +1470,251 @@ pub struct AnalysisReport2 {
     pub related_lines: Vec<LineRelated>,
     pub node_context: Option<NodeContext>,
     pub classification: Option<NodeClassification>,
-            pub symbols: Vec<LineSymbol>,
+    pub symbols: Vec<LineSymbol>,
+}
+
+pub struct InfluenceGraph {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+pub struct GraphNode;
+pub struct GraphEdge;
+pub enum ScopeKind {}
+pub struct ScopeContext {
+    pub kind: ScopeKind,
+    pub span: proc_macro2::Span,
+    pub owner: Option<ResolvedNode>,
+}
+fn resolve_scope(node_context: &NodeContext) -> Option<ScopeContext> {
+    todo!("h")
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RelationKind {
+    // Structural
+    Contains,
+    DefinedIn,
+    DeclaredIn,
+    // Ownership
+    Owns,
+    OwnedBy,
+    MovesTo,
+    MovedFrom,
+    // Borrowing
+    BorrowOf,
+    BorrowedBy,
+    MutableBorrowOf,
+    ImmutableBorrowOf,
+    // Aliasing
+    AliasOf,
+    CloneOf,
+    // Data flow
+    AssignedFrom,
+    DerivedFrom,
+    DependsOn,
+    // Scope / visibility
+    VisibleIn,
+    CapturedBy,
+    // Usage
+    References,
+    Calls,
+}
+#[derive(Clone, Debug, Serialize)]
+pub enum InfluenceKind {
+    Declaration,
+    Assignment,
+    Borrow,
+    Move,
+    Mutation,
+    Alias,
+}
+
+fn build_final_analysis(context: &ClickContext, symbols: Option<&[LineRelated]>) -> String {
+    let mut output = String::new();
+
+    let _ = writeln!(output, "================ CLICK CONTEXT ================");
+    let _ = writeln!(output, "FILE   : {}", context.file.display());
+    let _ = writeln!(output, "LINE   : {}", context.line);
+    let _ = writeln!(output, "COLUMN : {}", context.column);
+    let _ = writeln!(output);
+    let _ = writeln!(output, "SOURCE:");
+
+    let symbols = symbols.unwrap_or(&[]);
+    for (idx, source_line) in context.source.lines().enumerate() {
+        let line_number = idx + 1;
+        let labels: Vec<String> = symbols
+            .iter()
+            .filter(|s| s.line == line_number)
+            .map(|s| format!("{:?}", s.relations))
+            .collect();
+
+        if labels.is_empty() {
+            let _ = writeln!(output, "{:>4} | {}", line_number, source_line);
+        } else {
+            let _ = writeln!(
+                output,
+                "{:>4} | {:<50} // {}",
+                line_number,
+                source_line,
+                labels.join(", ")
+            );
+        }
+
+        // Always show cursor position
+        if line_number == context.line {
+            let prefix = format!("{:>4} | ", line_number);
+            let _ = writeln!(
+                output,
+                "{}{}^ (column {})",
+                " ".repeat(prefix.len()),
+                " ".repeat(context.column as usize),
+                context.column
+            );
+        }
+    }
+
+    // In case the click line is outside the source range
+    if context.line > context.source.lines().count() {
+        let _ = writeln!(output);
+        let _ = writeln!(
+            output,
+            "CLICK POSITION OUT OF RANGE: line {}, column {}",
+            context.line, context.column
+        );
+    }
+    let _ = writeln!(output, "===============================================");
+
+    output
+}
+fn print_final_analysis(context: &ClickContext, symbols: Option<&[LineRelated]>) {
+    println!("================ CLICK CONTEXT ================");
+    println!("FILE   : {}", context.file.display());
+    println!("LINE   : {}", context.line);
+    println!("COLUMN : {}", context.column);
+    println!();
+    println!("SOURCE:");
+    let symbols = symbols.unwrap_or(&[]);
+    for (idx, source_line) in context.source.lines().enumerate() {
+        let line_number = idx + 1;
+        let labels: Vec<String> = symbols
+            .iter()
+            .filter(|s| s.line == line_number)
+            .map(|s| format!("{:?}", s.relations))
+            .collect();
+        if labels.is_empty() {
+            println!("{:>4} | {}", line_number, source_line);
+        } else {
+            println!(
+                "{:>4} | {:<50} // {}",
+                line_number,
+                source_line,
+                labels.join(", ")
+            );
+        }
+        // Always show cursor position
+        if line_number == context.line {
+            let prefix = format!("{:>4} | ", line_number);
+            println!(
+                "{}{}^ (column {})",
+                " ".repeat(prefix.len()),
+                " ".repeat(context.column as usize),
+                context.column
+            );
+        }
+    }
+    // In case the click line is outside the source range
+    if context.line > context.source.lines().count() {
+        println!();
+        println!(
+            "CLICK POSITION OUT OF RANGE: line {}, column {}",
+            context.line, context.column
+        );
+    }
+    println!("===============================================");
+}
+fn print_final_analysisold(context: &ClickContext, symbols: Option<&[LineSymbol]>) {
+    println!("================ CLICK CONTEXT ================");
+    println!("FILE   : {}", context.file.display());
+    println!("LINE   : {}", context.line);
+    println!("COLUMN : {}", context.column);
+    println!();
+    println!("SOURCE:");
+    let symbols = symbols.unwrap_or(&[]);
+    for (idx, source_line) in context.source.lines().enumerate() {
+        let line_number = idx + 1;
+        let labels: Vec<String> = symbols
+            .iter()
+            .filter(|s| s.line == line_number)
+            .map(|s| format!("{}:{:?}", s.name, s.role))
+            .collect();
+        if labels.is_empty() {
+            println!("{:>4} | {}", line_number, source_line);
+        } else {
+            println!(
+                "{:>4} | {:<50} // {}",
+                line_number,
+                source_line,
+                labels.join(", ")
+            );
+        }
+        // Always show cursor position
+        if line_number == context.line {
+            let prefix = format!("{:>4} | ", line_number);
+            println!(
+                "{}{}^ (column {})",
+                " ".repeat(prefix.len()),
+                " ".repeat(context.column as usize),
+                context.column
+            );
+        }
+    }
+    // In case the click line is outside the source range
+    if context.line > context.source.lines().count() {
+        println!();
+        println!(
+            "CLICK POSITION OUT OF RANGE: line {}, column {}",
+            context.line, context.column
+        );
+    }
+    println!("===============================================");
+}
+
+fn print_node_context(node_context: &NodeContext, kind: LineKind) {
+    println!("================ NODE CONTEXT =================");
+    if let Some(subject) = &node_context.subject {
+        println!(
+            "Subject: {:?} {:?} @ {}:{}",
+            subject.kind,
+            kind,
+            subject.span.start().line,
+            subject.span.start().column,
+        );
+    } else {
+        println!("SUBJECT: None");
+    }
+    println!("Line: {:?}", kind);
+    println!("Expansion:");
+    for (i, node) in node_context.ancestors.iter().enumerate() {
+        let start = node.span.start();
+        let end = node.span.end();
+        println!(
+            "{:>2}. {:?} [{}:{} -> {}:{}]",
+            i, node.kind, start.line, start.column, end.line, end.column,
+        );
+    }
+    println!("===============================================");
+}
+
+#[derive(Debug, Serialize)]
+pub enum NodeClassification {
+    Variable,
+    BinaryExpression,
+    Scope,
+    FunctionCall,
+    Literal,
+    VariableDeclaration,
+    Assignment,
+    Borrow,
+    Condition,
+    Unknown,
 }
