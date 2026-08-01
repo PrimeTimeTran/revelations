@@ -1,4 +1,4 @@
-use crate::{analyzer::*, ir::*};
+use crate::{_config::AnalyzeConfig, analyzer::*, ir::*};
 use proc_macro2::Span;
 use quote::ToTokens;
 use regex_syntax::ast::Ast;
@@ -266,11 +266,14 @@ pub struct Workspace {
     pub files: Vec<SymId>,
     pub packages: Vec<SymId>,
     pub modules: Vec<SymId>,
+    pub config: AnalyzeConfig,
     next_sym_id: SymId,
 }
 impl Workspace {
     pub fn new() -> Self {
+        let config = AnalyzeConfig::default();
         let mut workspace = Self {
+            config,
             root: 0,
             symbols: Vec::new(),
             packages: Vec::new(),

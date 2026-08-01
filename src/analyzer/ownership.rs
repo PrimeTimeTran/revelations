@@ -1,4 +1,8 @@
-use crate::{analyzer::*, ir::*};
+use crate::{
+    _config::{AnalyzeConfig, Logger as Log, Vals},
+    analyzer::*,
+    ir::*,
+};
 use proc_macro2::Span;
 use quote::ToTokens;
 use regex_syntax::ast::Ast;
@@ -17,128 +21,135 @@ use syn::{
     visit::{self, Visit, visit_local},
     visit_mut::{self, VisitMut},
 };
-// struct ClickAnalysis {
-//     file_path: PathBuf,
-//     source: String,
-//     tree: SyntaxTree,
-//     position: Position,
-// }
-// 1. Click
-//    - file
-//    - line
-//    - column
-//    - cursor position
-// 2. Find relevant lines
-//    LineRelated[]
-//    Example:
-//    line 2 -> Scope
-//    line 3 -> Scope
-//    line 9 -> Scope
-// 3. Populate symbols inside those lines
-//    Line 3:
-//       symbol: bar
-//       role: Declaration
-//    Line 9:
-//       symbol: bar
-//       role: Reference
-// 4. Compare symbols against clicked subject
-//    Subject:
-//       bar
-//    Line 3:
-//       bar declaration
-//       affects subject: true
-//    Line 2:
-//       foo declaration
-//       affects subject: false
-// 5. Add flags
-//    LineAnalysis {
-//        line: 3,
-//        symbols: [
-//            {
-//              name: "bar",
-//              role: "declaration",
-//              relation_to_subject: "defines"
-//            }
-//        ],
-//        flags: {
-//            in_scope: true,
-//            influences_subject: true,
-//            unrelated: false
-//        }
-//    }
-// 6. Render different views
-//    Decorations:
-//       - highlight influence lines
-//       - grey unrelated lines
-//    Inlay hints:
-//       - show symbol roles
-//    CodeLens:
-//       - show actions
-//    Webview:
-//       - show graph
-// pub fn analyze_ownership_on_click(
-//     file_path: &PathBuf,
-//     options: &AnalyzerOptions,
-// ) -> Result<OwnershipAnalysisResult, AnalysisError> {
-//     let source = load_source(file_path)?;
-// 1. Identify Subject
-//     let click = ClickContext::new(
-//         file_path,
-//         &source,
-//         options,
-//     );
-// 2.
-//     let ast = parse_source(&source)?;
-//     let subject = resolve_subject(
-//         &ast,
-//         &source,
-//         &click,
-//     )?;
-//     let scope = find_scope(
-//         &ast,
-//         &click,
-//     );
-//     let mut lines = collect_lines(
-//         &source,
-//         &scope,
-//     );
-//     let symbols = collect_symbols(
-//         &ast,
-//         &lines,
-//     );
-//     let relations = analyze_relationships(
-//         &subject,
-//         &symbols,
-//     );
-//     classify_lines(
-//         &mut lines,
-//         &subject,
-//         &relations,
-//     );
-//     Ok(build_analysis_result(
-//         click,
-//         subject,
-//         scope,
-//         lines,
-//         symbols,
-//         relations,
-//     ))
-// }
-// Click
-//  |
-// Resolve AST node
-//  |
-// Collect ancestors
-//  |
-// Classify node
-//  |
-// Build influence edges
-//  |
-// Traverse outward
-//  |
-// Highlight affected lines
 
 impl Workspace {
+    fn roadmap() {
+        // VSCode
+        // - Fold range from selection from VSCODE ( fold everything selectede. better than)
+
+        // struct ClickAnalysis {
+        //     file_path: PathBuf,
+        //     source: String,
+        //     tree: SyntaxTree,
+        //     position: Position,
+        // }
+        // 1. Click
+        //    - file
+        //    - line
+        //    - column
+        //    - cursor position
+        // 2. Find relevant lines
+        //    LineRelated[]
+        //    Example:
+        //    line 2 -> Scope
+        //    line 3 -> Scope
+        //    line 9 -> Scope
+        // 3. Populate symbols inside those lines
+        //    Line 3:
+        //       symbol: bar
+        //       role: Declaration
+        //    Line 9:
+        //       symbol: bar
+        //       role: Reference
+        // 4. Compare symbols against clicked subject
+        //    Subject:
+        //       bar
+        //    Line 3:
+        //       bar declaration
+        //       affects subject: true
+        //    Line 2:
+        //       foo declaration
+        //       affects subject: false
+        //
+        // 5. Add flags
+        //    LineAnalysis {
+        //        line: 3,
+        //        symbols: [
+        //            {
+        //              name: "bar",
+        //              role: "declaration",
+        //              relation_to_subject: "defines"
+        //            }
+        //        ],
+        //        flags: {
+        //            in_scope: true,
+        //            influences_subject: true,
+        //            unrelated: false
+        //        }
+        //    }
+        // 6. Render different views
+        //    Decorations:
+        //       - highlight influence lines
+        //       - grey unrelated lines
+        //    Inlay hints:
+        //       - show symbol roles
+        //    CodeLens:
+        //       - show actions
+        //    Webview:
+        //       - show graph
+        // pub fn analyze_ownership_on_click(
+        //     file_path: &PathBuf,
+        //     options: &AnalyzerOptions,
+        // ) -> Result<OwnershipAnalysisResult, AnalysisError> {
+        //     let source = load_source(file_path)?;
+        // 1. Identify Subject
+        //     let click = ClickContext::new(
+        //         file_path,
+        //         &source,
+        //         options,
+        //     );
+        // 2.
+        //     let ast = parse_source(&source)?;
+        //     let subject = resolve_subject(
+        //         &ast,
+        //         &source,
+        //         &click,
+        //     )?;
+        //     let scope = find_scope(
+        //         &ast,
+        //         &click,
+        //     );
+        //     let mut lines = collect_lines(
+        //         &source,
+        //         &scope,
+        //     );
+        //     let symbols = collect_symbols(
+        //         &ast,
+        //         &lines,
+        //     );
+        //     let relations = analyze_relationships(
+        //         &subject,
+        //         &symbols,
+        //     );
+        //     classify_lines(
+        //         &mut lines,
+        //         &subject,
+        //         &relations,
+        //     );
+        //     Ok(build_analysis_result(
+        //         click,
+        //         subject,
+        //         scope,
+        //         lines,
+        //         symbols,
+        //         relations,
+        //     ))
+        // }
+        // Click
+        //  |
+        // Resolve AST node
+        //  |
+        // Collect ancestors
+        //  |
+        // Classify node
+        //  |
+        // Build influence edges
+        //  |
+        // Traverse outward
+        //  |
+        // Highlight affected lines
+    }
+
     fn print_click_analysis(
         context: &ClickContext,
         symbols: &[LineSymbol],
@@ -208,33 +219,6 @@ impl Workspace {
         collector.visit_file(ast);
         collector.nodes
     }
-    fn resolve_click(ast: &syn::File, context: &ClickContext) -> Option<NodeContext> {
-        let nodes = Self::collect_nodes(ast);
-        if let Some(node) = Self::find_node_at(&nodes, context.line, context.column) {
-            return Some(Self::node_to_context(node).unwrap());
-        }
-        if let Some(node) = Self::find_node_on_line(&nodes, context.line) {
-            return Some(Self::node_to_context(node).unwrap());
-        }
-        Self::find_parent_node(&nodes, context.line)
-    }
-    fn analyze_click(
-        ast: &syn::File,
-        context: ClickContext,
-        symbols: Vec<LineSymbol>,
-    ) -> ClickReport {
-        let node_context = Some(Self::resolve_node_context(
-            ast,
-            context.line,
-            context.column,
-        ));
-        ClickReport {
-            context,
-            symbols,
-            node_context,
-        }
-    }
-
     fn resolve_node(
         syntax_tree: &syn::File,
         options: &AnalyzerOptions,
@@ -263,10 +247,10 @@ impl Workspace {
             column,
             candidates: Vec::new(),
         };
-        println!("Candidates:");
-        for c in &resolver.candidates {
-            println!("  {:?}", c);
-        }
+        // println!("Candidates:");
+        // for c in &resolver.candidates {
+        //     println!("  {:?}", c);
+        // }
         resolver.visit_file(syntax_tree);
         let mut candidates = resolver.candidates;
         candidates.sort_by_key(|node| {
@@ -283,25 +267,23 @@ impl Workspace {
         let Some(subject) = &context.subject else {
             return NodeClassification::Unknown;
         };
+        let parent_kind = context.ancestors.first().map(|a| &a.kind);
 
-        match subject.kind {
-            AstNodeKind::Path => {
-                // foo, x, variable references
+        match (&subject.kind, parent_kind) {
+            // AstNodeKind::Path => NodeClassification::Variable,
+            (
+                AstNodeKind::PatternIdentifier,
+                Some(AstNodeKind::Local | AstNodeKind::LetStatement),
+            ) => NodeClassification::VariableDeclaration,
+            (AstNodeKind::Path | AstNodeKind::Identifier | AstNodeKind::PatternIdentifier, _) => {
                 NodeClassification::Variable
             }
-
-            AstNodeKind::Literal => NodeClassification::Literal,
-
-            AstNodeKind::CallExpr => NodeClassification::FunctionCall,
-
-            AstNodeKind::BinaryExpr => NodeClassification::BinaryExpression,
-
-            AstNodeKind::Local => NodeClassification::VariableDeclaration,
-
-            AstNodeKind::IfExpr => NodeClassification::Condition,
-
-            AstNodeKind::Block => NodeClassification::Scope,
-
+            (AstNodeKind::Literal, _) => NodeClassification::Literal,
+            (AstNodeKind::CallExpr, _) => NodeClassification::FunctionCall,
+            (AstNodeKind::BinaryExpr, _) => NodeClassification::BinaryExpression,
+            (AstNodeKind::Local, _) => NodeClassification::VariableDeclaration,
+            (AstNodeKind::IfExpr, _) => NodeClassification::Condition,
+            (AstNodeKind::Block, _) => NodeClassification::Scope,
             _ => NodeClassification::Unknown,
         }
     }
@@ -321,6 +303,32 @@ impl Workspace {
     //     let node = resolver.resolve();
     //     Ok(node)
     // }
+    fn resolve_click(ast: &syn::File, context: &ClickContext) -> Option<NodeContext> {
+        let nodes = Self::collect_nodes(ast);
+        if let Some(node) = Self::find_node_at(&nodes, context.line, context.column) {
+            return Some(Self::node_to_context(node).unwrap());
+        }
+        if let Some(node) = Self::find_node_on_line(&nodes, context.line) {
+            return Some(Self::node_to_context(node).unwrap());
+        }
+        Self::find_parent_node(&nodes, context.line)
+    }
+    fn analyze_click(
+        ast: &syn::File,
+        context: ClickContext,
+        symbols: Vec<LineSymbol>,
+    ) -> ClickReport {
+        let node_context = Some(Self::resolve_node_context(
+            ast,
+            context.line,
+            context.column,
+        ));
+        ClickReport {
+            context,
+            symbols,
+            node_context,
+        }
+    }
     fn parse_file(file_path: &PathBuf) -> Result<(String, syn::File), AnalysisError> {
         let source =
             std::fs::read_to_string(file_path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
@@ -332,53 +340,31 @@ impl Workspace {
         file_path: &PathBuf,
         options: &AnalyzerOptions,
     ) -> Result<AnalysisReport, AnalysisError> {
+        let mut cfg = AnalyzeConfig::new(Some(file_path), options);
+        let log = Log::new(&options, &mut cfg);
+        // Change settings
+        // log.cfg.set_level(val);
         let (source, syntax_tree) = Self::parse_file(file_path)?;
         let click = ClickContext::new(file_path, &source, options);
-        let context = Self::resolve_node(&syntax_tree, options)?;
-        let classification = Self::classify_node(&context);
-
-        println!("CLICK:");
-        println!("  file: {:?}", file_path);
-        println!("  line: {:?}", options.line);
-        println!("  column: {:?}", options.column);
+        log.cfg.set_level("1");
+        log.print("Target File", Vals::new().file_path(file_path));
 
         let context = Self::resolve_node(&syntax_tree, options)?;
-
-        println!("SUBJECT:");
         match &context.subject {
-            Some(node) => println!("{:#?}", node),
+            Some(node) => log.print("Subject", Vals::new().subject(node)),
             None => println!("NONE"),
         }
 
-        println!("\nANCESTORS:");
-        for ancestor in &context.ancestors {
-            println!("{:?}", ancestor.kind);
-        }
-
-        println!("\nNODE CONTEXT:");
-        println!("{:#?}", context);
-
         let classification = Self::classify_node(&context);
+        log.print(
+            "Classification",
+            Vals::new().classification(&classification),
+        );
 
-        println!("\nCLASSIFICATION:");
-        println!("{:#?}", classification);
-        // Ok(Vec::new())
-
-        let syntax_tree = Self::parse_source(&source)?;
+        for ancestor in &context.ancestors {
+            log.print("Ancestors", Vals::new().ancestors(&ancestor.kind));
+        }
         let kind = classify_line(&syntax_tree, options.line.unwrap());
-        // let node_context = Self::resolve_subject(options, &syntax_tree)?;
-        // let classification = Self::classify_node(&node_context);
-        let resolved: Result<(String, rust::NodeContext), AnalysisError> =
-            resolve_node_at_position(&syntax_tree, &source, options);
-        // let item = Self::resolve_subject(options, &syntax_tree);
-        let node_context = match Self::resolve_node(&syntax_tree, options) {
-            Ok(context) => context,
-            Err(_) => {
-                return Err(AnalysisError::Parse(
-                    "Failed to resolve node at position".into(),
-                ));
-            }
-        };
 
         let mut workspace = Workspace::new();
         let file_id = workspace.add_symbol(
@@ -393,7 +379,7 @@ impl Workspace {
             Some(workspace.root),
         );
         workspace.files.push(file_id);
-        let subject = node_context
+        let subject = context
             .subject
             .clone()
             .ok_or_else(|| AnalysisError::Parse("No subject node found at position".into()))?;
@@ -407,25 +393,10 @@ impl Workspace {
         ownership_visitor.visit_file(&syntax_tree);
         let scope = Self::find_scope_at_position(&syntax_tree, options);
         let mut related_lines: Vec<LineRelated> = Vec::new();
-        fn add_relation(
-            lines: &mut Vec<LineRelated>,
-            line: usize,
-            file_path: &PathBuf,
-            relation: OwnershipRelation,
-        ) {
-            if let Some(existing) = lines.iter_mut().find(|x| x.line == line) {
-                existing.relations.push(relation);
-            } else {
-                lines.push(LineRelated {
-                    line,
-                    file_path: file_path.clone(),
-                    relations: vec![relation],
-                });
-            }
-        }
+
         if let Some(scope_span) = Self::find_scope_at_position(&syntax_tree, options) {
             for line in scope_span.start().line..=scope_span.end().line {
-                add_relation(
+                Self::add_relation(
                     &mut related_lines,
                     line,
                     file_path,
@@ -434,32 +405,75 @@ impl Workspace {
             }
         }
         for span in ownership_visitor.related_spans {
-            add_relation(
+            Self::add_relation(
                 &mut related_lines,
                 span.start().line,
                 file_path,
                 OwnershipRelation::Reference,
             );
         }
+        // let analysis = related_lines.clone();
+        // let analysis = AnalysisData {
+        //     related_lines: analysis,
+        //     node_context: context.clone(),
+        //     classification: classification,
+        //     symbols: Vec::new(),
+        // };
+        // let formatted_output = build_final_analysis(&click, Some(&related_lines));
+        // // eprintln!("hi formatted {}", formatted_output);
+        // let report = AnalysisReport {
+        //     click,
+        //     analysis,
+        //     formatted_output,
+        // };
+        // let json_output = serde_json::to_string(&report)?;
+        // println!("{}", report.formatted_output);
+        // let mut stdout = io::stdout();
+        // stdout
+        //     .write_all(json_output.as_bytes())
+        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
+        // stdout
+        //     .write_all(b"\n")
+        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
+        // stdout
+        //     .flush()
+        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
+        // Ok(report)
+        Self::stage_report(context, click, related_lines, classification)
+    }
+
+    fn stage_report(
+        ctx: NodeContext,
+        click: ClickContext,
+        related_lines: Vec<LineRelated>,
+        classification: NodeClassification,
+    ) -> Result<AnalysisReport, AnalysisError> {
         let analysis = related_lines.clone();
         let analysis = AnalysisData {
             related_lines: analysis,
-            node_context: context.clone(),
+            node_context: ctx.clone(),
             classification: classification,
             symbols: Vec::new(),
         };
         let formatted_output = build_final_analysis(&click, Some(&related_lines));
-        eprintln!("{}", formatted_output);
+        // eprintln!("hi formatted {}", formatted_output);
         let report = AnalysisReport {
             click,
             analysis,
             formatted_output,
         };
         let json_output = serde_json::to_string(&report)?;
-        let mut stdout = io::stdout();
-        stdout.write_all(json_output.as_bytes()).map_err(|e| AnalysisError::IoError(e.to_string()))?;
-        stdout.write_all(b"\n").map_err(|e| AnalysisError::IoError(e.to_string()))?;
-        stdout.flush().map_err(|e| AnalysisError::IoError(e.to_string()))?;
+        println!("{}", report.formatted_output);
+        // let mut stdout = io::stdout();
+        // stdout
+        //     .write_all(json_output.as_bytes())
+        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
+        // stdout
+        //     .write_all(b"\n")
+        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
+        // stdout
+        //     .flush()
+        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
         Ok(report)
     }
 
@@ -479,12 +493,7 @@ impl Workspace {
             size
         })
     }
-    fn parse_source(source: &str) -> Result<syn::File, AnalysisError> {
-        syn::parse_file(source).map_err(|e| AnalysisError::Parse(e.to_string()))
-    }
-    fn find_scope(syntax_tree: &syn::File, click: &ClickContext) -> Option<ScopeInfo> {
-        todo!("find scope")
-    }
+
     fn collect_lines(source: &str, scope: &ScopeInfo) -> Vec<LineAnalysis> {
         todo!("collect_lines")
     }
@@ -515,13 +524,13 @@ impl Workspace {
         todo!("run_checks")
     }
     fn collect_symbols(&self, ast: &syn::File) {
-        todo!("run_checks")
+        todo!("collect_symbols")
     }
     fn build_indexes(&self, node: &syn::File) {
-        todo!("run_checks")
+        todo!("build_indexes")
     }
     fn analyze(&self, ast: &syn::File, context: ClickContext) {
-        todo!("");
+        todo!("analyze");
         // let symbols = self.collect_symbols(ast);
         // self.run_checks(ast);
         // self.build_indexes(ast);
@@ -533,6 +542,23 @@ impl Workspace {
         // Self::print_click_report(&report);
         // later:
         // send_to_client(report);
+    }
+    fn add_relation(
+        lines: &mut Vec<LineRelated>,
+        line: usize,
+        file_path: &PathBuf,
+        relation: OwnershipRelation,
+    ) {
+        let configs = AnalyzeConfig::default();
+        if let Some(existing) = lines.iter_mut().find(|x| x.line == line) {
+            existing.relations.push(relation);
+        } else {
+            lines.push(LineRelated {
+                line,
+                file_path: file_path.clone(),
+                relations: vec![relation],
+            });
+        }
     }
     fn print_click_report(report: &ClickReport) {
         Self::print_click_analysis(
@@ -569,6 +595,7 @@ fn extract_ident(pat: &syn::Pat) -> Option<&syn::Ident> {
         _ => None,
     }
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymRelation {
     /// Source symbol
@@ -609,80 +636,6 @@ pub enum SymRole {
 }
 struct SymLocation;
 
-// fn print_final_analysis(
-//     context: &ClickContext,
-//     node_context: Option<&NodeContext>,
-// ) {
-//     println!("================ ANALYSIS =================");
-//     println!(
-//         "FILE: {}",
-//         context.file.display()
-//     );
-//     println!(
-//         "CLICK: {}:{}",
-//         context.line,
-//         context.column
-//     );
-//     println!();
-//     println!("{:<40} NODE", "SOURCE");
-//     println!("{:-<60}", "");
-//     for (idx, line) in context.source.lines().enumerate() {
-//         let line_no = idx + 1;
-//         let marker =
-//             if line_no == context.line {
-//                 " <--"
-//             } else {
-//                 ""
-//             };
-//         println!(
-//             "{:>3} | {:<40} {}",
-//             line_no,
-//             line,
-//             marker
-//         );
-//     }
-//     println!();
-//     println!("SUBJECT:");
-//     match &node_context.unwrap().subject {
-//         Some(node) => {
-//             println!(
-//                 "  {:?}",
-//                 node.kind
-//             );
-//         }
-//         None => {
-//             println!("  None");
-//         }
-//     }
-//     println!();
-//     println!("CONTEXT:");
-//     for node in &node_context.unwrap().ancestors {
-//         println!(
-//             "  └─ {:?}",
-//             node.kind
-//         );
-//     }
-//     println!("============================================");
-// }
-
-// fn span_contains_position(
-//     span: Span,
-//     line: u32,
-//     column: u32,
-// ) -> bool {
-//     let start = span.start();
-//     let end = span.end();
-//     if line < start.line as u32 || line > end.line as u32 {
-//         return false;
-//     }
-//     if line == start.line as u32 && column < start.column as u32 {
-//         return false;
-//     }
-//     if line == end.line as u32 && column > end.column as u32 {
-//         return false;
-//     }
-//     true
-// }
 fn same_span(a: proc_macro2::Span, b: SerializableSpan) -> bool {
     let a_start = a.start();
     let a_end = a.end();
@@ -855,7 +808,7 @@ fn span_contains_line(span: proc_macro2::Span, line: u32) -> bool {
     let end = span.end().line as u32;
     line >= start && line <= end
 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ClickContext {
     pub file: PathBuf,
     pub line: usize,
@@ -975,15 +928,6 @@ impl From<serde_json::Error> for AnalysisError {
         AnalysisError::IoError(err.to_string())
     }
 }
-// impl SerializableSpan {
-//     pub fn start(&self) -> (usize, usize) {
-//         (self.start_line, self.start_col)
-//     }
-
-//     pub fn end(&self) -> (usize, usize) {
-//         (self.end_line, self.end_col)
-//     }
-// }
 impl SerializableSpan {
     pub fn start(&self) -> DummyLineColumn {
         DummyLineColumn {
@@ -999,19 +943,10 @@ impl SerializableSpan {
         }
     }
 }
-
-// Mimics proc_macro2::LineColumn interface
 pub struct DummyLineColumn {
     pub line: usize,
     pub column: usize,
 }
-
-// #[derive(Clone, Debug, Serialize)]
-// pub struct ResolvedNode {
-//     pub kind: AstNodeKind,
-//     #[serde(skip)]
-//     pub span: proc_macro2::Span,
-// }
 pub struct NodeResolver {
     pub line: usize,
     pub column: usize,
@@ -1025,18 +960,14 @@ pub struct NodeResolver {
 impl NodeResolver {
     fn contains(&self, span: Span) -> bool {
         let ((start_line, start_column), (end_line, end_column)) = line_col(span);
-
-        println!(
-            "CHECK {}:{} -> {}:{} AGAINST {}:{}",
-            start_line, start_column, end_line, end_column, self.line, self.column
-        );
-
+        // println!(
+        //     "CHECK {}:{} -> {}:{} AGAINST {}:{}",
+        //     start_line, start_column, end_line, end_column, self.line, self.column
+        // );
         let after_start =
             self.line > start_line || (self.line == start_line && self.column >= start_column);
-
         let before_end =
             self.line < end_line || (self.line == end_line && self.column <= end_column);
-
         after_start && before_end
     }
 }
@@ -1045,14 +976,13 @@ impl NodeResolver {
         let start = span.start();
         let end = span.end();
 
-        println!(
-            "{:?}: {}:{} -> {}:{} | CLICK {}:{}",
-            kind, start.line, start.column, end.line, end.column, self.line, self.column
-        );
+        // println!(
+        //     "{:?}: {}:{} -> {}:{} | CLICK {}:{}",
+        //     kind, start.line, start.column, end.line, end.column, self.line, self.column
+        // );
 
         if self.contains(span) {
-            println!("  ✅ MATCH");
-
+            // println!("  ✅ MATCH");
             self.candidates.push(ResolvedNode {
                 kind,
                 span: span.into(),
@@ -1075,9 +1005,9 @@ impl NodeResolver {
 impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
     fn visit_pat_ident(&mut self, node: &'ast syn::PatIdent) {
         self.check(AstNodeKind::PatternIdentifier, node.span());
-        println!("PAT IDENT 1 {:?}", node.ident);
+        // println!("PAT IDENT 1 {:?}", node.ident);
         syn::visit::visit_pat_ident(self, node);
-        println!("PAT IDENT {:?}", node.ident);
+        // println!("PAT IDENT {:?}", node.ident);
     }
     fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
         self.check(AstNodeKind::Path, node.span());
@@ -1214,9 +1144,9 @@ impl NodeContext {
 pub fn resolve_click_context(options: &AnalyzerOptions, source: &str) {
     if let Some(line) = options.line {
         let idx = line.saturating_sub(1) as usize;
-        eprintln!("CLICK:");
-        eprintln!("  line   : {}", line);
-        eprintln!("  column : {:?}", options.column);
+        // eprintln!("CLICK:");
+        // eprintln!("  line   : {}", line);
+        // eprintln!("  column : {:?}", options.column);
         if let Some(source_line) = source.lines().nth(idx) {
             eprintln!("  source : {}", source_line);
         }
@@ -1678,7 +1608,6 @@ fn print_final_analysisold(context: &ClickContext, symbols: Option<&[LineSymbol]
     }
     println!("===============================================");
 }
-
 fn print_node_context(node_context: &NodeContext, kind: LineKind) {
     println!("================ NODE CONTEXT =================");
     if let Some(subject) = &node_context.subject {

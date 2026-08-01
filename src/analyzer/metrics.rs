@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs::read_to_string, path::PathBuf};
 
-use crate::{analyzer::*, ir::*};
+use crate::{_config::AnalyzeConfig, analyzer::*, ir::*};
 use quote::ToTokens;
 use syn::{
     File,
@@ -50,11 +50,14 @@ pub struct WorkspaceMetrics {
     pub functions: usize,
     pub types: usize,
     pub imports: usize,
+    // pub config: AnalyzeConfig,
 }
 
 impl WorkspaceMetrics {
     pub fn new(workspace: &Workspace) -> Self {
+        // let config = AnalyzeConfig::default();
         Self {
+            // config,
             files: workspace.files.len(),
             packages: workspace.packages.len(),
             symbols: workspace.symbols.len(),

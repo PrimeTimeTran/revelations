@@ -17,6 +17,7 @@
 // #![warn(unused_assignments)]
 // #![warn(unused_must_use)]
 
+pub mod _config;
 pub mod _scope;
 pub mod _semantic;
 pub mod _workspace;

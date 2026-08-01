@@ -26,6 +26,7 @@ pub struct AnalyzerOptions {
     pub column: Option<u32>,
     pub mode: Option<String>,
 }
+
 impl Default for AnalyzerOptions {
    fn default()-> Self{
        Self {
