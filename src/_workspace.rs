@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::{_scope::*, ir::*};
 
-///-
 /// - What is the difference in lifetime of a workspace and a pkg?
 /// - A pkg has a different lifetime than a workspace how?
 /// - They're both versioned & shared via public registries.

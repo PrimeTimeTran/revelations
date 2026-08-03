@@ -1,7 +1,5 @@
 use crate::{
-    _config::{AnalyzeConfig, Logger as Log, Vals},
-    analyzer::*,
-    ir::*,
+    _config::{AnalyzeConfig, Logger as Log, Vals}, _scope::Scope, analyzer::*, ir::*,
 };
 use proc_macro2::Span;
 use quote::ToTokens;
@@ -24,6 +22,194 @@ use syn::{
 
 impl Workspace {
     fn roadmap() {
+        // To nail the compiler boundaries for an interactive click-to-analyze tool (like a language server feature), you want to separate **Phase 1: Query Extraction** (point-in-time lookup) from **Phase 2: Whole-File Semantic Mapping** (line-by-line analysis).
+
+        // Since you are working with `syn::File` (standard Rust AST structures), you can implement `collect_lines` by using a **visitor pattern** or a recursive span-matching pass that scans the syntax tree once and projects the AST nodes onto their respective source lines.
+
+        // Here is how you can structure the boundary and implement `collect_lines`:
+
+        // ### 1. The Compiler Pipeline Boundary
+
+        // * **Pipeline A (Targeted Query):** Click coordinates $\rightarrow$ `resolve_node` $\rightarrow$ Find the exact AST node and its path/ancestors. (Fast, localized, bottom-up).
+        // * **Pipeline B (Whole-File Render/Analysis):** Source string + AST $\rightarrow$ `collect_lines` $\rightarrow$ Line-by-line symbol mapping (Top-down AST walk mapping spans to line numbers).
+        // * **Pipeline C (The Link):** Compare Pipeline A's resolved subject against Pipeline B's line symbols to answer "does this line affect my click?"
+
+        // ---
+
+        // ### 2. Implementing `collect_lines`
+
+        // Since `syn` nodes carry span information (`syn::spanned::Spanned`), you can walk the AST, find declarations, expressions, and identifiers, figure out which line number they sit on, and populate your `LineAnalysis` structures.
+
+        fn collect_lines(source: &str, syntax_tree: &syn::File) -> Vec<LineAnalysis> {
+            let raw_lines: Vec<&str> = source.lines().collect();
+            let lines_count = raw_lines.len();
+
+            // Maps line numbers to their respective symbol references
+            let mut line_map: HashMap<usize, Vec<SymReference>> = HashMap::new();
+
+            // The symbol registry / scope table tracking known definitions top-down
+            let mut symbol_registry: HashMap<String, SymInfo> = HashMap::new();
+            let mut next_id = 0;
+
+            // Walk the AST items
+            for item in &syntax_tree.items {
+                collect_item(item, &mut line_map, &mut symbol_registry, &mut next_id);
+            }
+
+            // Build the final vector mapping line-by-line
+            (1..=lines_count)
+                .map(|line_num| {
+                    let text = raw_lines.get(line_num - 1).unwrap_or(&"").to_string();
+                    let symbols = line_map.remove(&line_num).unwrap_or_default();
+
+                    LineAnalysis {
+                        line: line_num,
+                        text,
+                        flags: LineFlags::default(), // Adjust based on your struct definition
+                        symbols,
+                    }
+                })
+                .collect()
+        }
+
+        fn collect_item(
+            item: &syn::Item,
+            line_map: &mut HashMap<usize, Vec<SymReference>>,
+            registry: &mut HashMap<String, SymInfo>,
+            next_id: &mut usize,
+        ) {
+            if let syn::Item::Fn(item_fn) = item {
+                // Register function definition if needed
+                for stmt in &item_fn.block.stmts {
+                    collect_stmt(stmt, line_map, registry, next_id);
+                }
+            }
+        }
+
+        fn collect_stmt(
+            stmt: &syn::Stmt,
+            line_map: &mut HashMap<usize, Vec<SymReference>>,
+            registry: &mut HashMap<String, SymInfo>,
+            next_id: &mut usize,
+        ) {
+            match stmt {
+                syn::Stmt::Local(local) => {
+                    let line = local.span().start().line;
+
+                    // 1. Handle the binding (Declaration site)
+                    if let syn::Pat::Ident(pat_ident) = &local.pat {
+                        let name = pat_ident.ident.to_string();
+                        let sym_info = SymInfo {
+                            id: *next_id,
+                            name: name.clone(),
+                            defined_at: local.span(),
+                        };
+                        registry.insert(name.clone(), sym_info);
+                        *next_id += 1;
+
+                        let info = registry.get(&name).unwrap();
+
+                        // Record declaration reference pointing back to its info
+                        line_map.entry(line).or_default().push(SymReference {
+                            name,
+                            role: SymRole::Declaration, // Ensure role is explicitly set here
+                            span: local.span(),
+                            resolved_id: Some(info.id),
+                        });
+                    }
+
+                    // 2. Handle the right-hand side initializer (Modern syn::LocalInit access)
+                    if let Some(init) = &local.init {
+                        collect_expr(&init.expr, line_map, registry);
+                    }
+                }
+                syn::Stmt::Expr(expr, _) => {
+                    collect_expr(expr, line_map, registry);
+                }
+                _ => {}
+            }
+        }
+
+        fn collect_expr(
+            expr: &syn::Expr,
+            line_map: &mut HashMap<usize, Vec<SymReference>>,
+            registry: &HashMap<String, SymInfo>,
+        ) {
+            match expr {
+                syn::Expr::Path(expr_path) => {
+                    if let Some(ident) = expr_path.path.get_ident() {
+                        let name = ident.to_string();
+                        let line = expr_path.span().start().line;
+
+                        // Look up if this reference points to a known symbol
+                        let resolved_id = registry.get(&name).map(|info| info.id);
+
+                        line_map.entry(line).or_default().push(SymReference {
+                            name,
+                            role: SymRole::Reference, // Could be mutation depending on context
+                            span: expr_path.span(),
+                            resolved_id,
+                        });
+                    }
+                }
+                syn::Expr::Binary(binary) => {
+                    collect_expr(&binary.left, line_map, registry);
+                    collect_expr(&binary.right, line_map, registry);
+                }
+                _ => {}
+            }
+        }
+
+        // Example recursive extractor for syn items/statements
+        // fn extract_symbols_from_item(item: &syn::Item, line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>) {
+        //     match item {
+        //         syn::Item::Fn(item_fn) => {
+        //             let line = item_fn.span().start().line;
+        //             // Record function scope / definition symbol
+        //             line_map.entry(line).or_default().push(SymInfo {
+        //                 // id: ,
+        //                 defined_at: Span,
+        //                 name: item_fn.sig.ident.to_string(),
+        //                 role: SymRole::Function,
+        //             });
+
+        //             // Walk statements inside the function body
+        //             for stmt in &item_fn.block.stmts {
+        //                 extract_symbols_from_stmt(stmt, line_map);
+        //             }
+        //         }
+        //         _ => {}
+        //     }
+        // }
+
+        // fn extract_symbols_from_stmt(stmt: &syn::Stmt, line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>) {
+        //     match stmt {
+        //         syn::Stmt::Local(local) => {
+        //             let line = local.span().start().line;
+        //             // Extract the variable name being bound (e.g., `spam` in `let spam = bar;`)
+        //             if let syn::Pat::Ident(pat_ident) = &local.pat {
+        //                 line_map.entry(line).or_default().push(SymInfo {
+        //                     name: pat_ident.ident.to_string(),
+        //                     role: SymRole::Declaration,
+        //                 });
+        //             }
+        //             // You can also inspect local.init for references (like `bar`)
+        //         }
+        //         syn::Stmt::Expr(expr, _) => {
+        //             extract_symbols_from_expr(expr, line_map);
+        //         }
+        //         _ => {}
+        //     }
+        // }
+
+        fn extract_symbols_from_expr(
+            _expr: &syn::Expr,
+            _line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>,
+        ) {
+            // Recursively pull identifiers/references from expressions
+        }
+
+        // Phase 1: Query Extraction
         // VSCode
         // - Fold range from selection from VSCODE ( fold everything selectede. better than)
 
@@ -149,7 +335,6 @@ impl Workspace {
         //  |
         // Highlight affected lines
     }
-
     fn print_click_analysis(
         context: &ClickContext,
         symbols: &[LineSymbol],
@@ -347,7 +532,6 @@ impl Workspace {
         let (source, syntax_tree) = Self::parse_file(file_path)?;
         let click = ClickContext::new(file_path, &source, options);
         log.cfg.set_level("1");
-        log.print("Target File", Vals::new().file_path(file_path));
 
         let context = Self::resolve_node(&syntax_tree, options)?;
         match &context.subject {
@@ -364,6 +548,7 @@ impl Workspace {
         for ancestor in &context.ancestors {
             log.print("Ancestors", Vals::new().ancestors(&ancestor.kind));
         }
+
         let kind = classify_line(&syntax_tree, options.line.unwrap());
 
         let mut workspace = Workspace::new();
@@ -384,7 +569,9 @@ impl Workspace {
             .clone()
             .ok_or_else(|| AnalysisError::Parse("No subject node found at position".into()))?;
         let mut ownership_visitor = OwnershipVisitor {
+            next_id: 0,
             subject,
+            scopes: Vec::new(),
             scope_spans: Vec::new(),
             options: options.clone(),
             related_spans: Vec::new(),
@@ -412,33 +599,7 @@ impl Workspace {
                 OwnershipRelation::Reference,
             );
         }
-        // let analysis = related_lines.clone();
-        // let analysis = AnalysisData {
-        //     related_lines: analysis,
-        //     node_context: context.clone(),
-        //     classification: classification,
-        //     symbols: Vec::new(),
-        // };
-        // let formatted_output = build_final_analysis(&click, Some(&related_lines));
-        // // eprintln!("hi formatted {}", formatted_output);
-        // let report = AnalysisReport {
-        //     click,
-        //     analysis,
-        //     formatted_output,
-        // };
-        // let json_output = serde_json::to_string(&report)?;
-        // println!("{}", report.formatted_output);
-        // let mut stdout = io::stdout();
-        // stdout
-        //     .write_all(json_output.as_bytes())
-        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
-        // stdout
-        //     .write_all(b"\n")
-        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
-        // stdout
-        //     .flush()
-        //     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
-        // Ok(report)
+        // let stage_one = Self::analyze_click(&syntax_tree, click, related_lines);
         Self::stage_report(context, click, related_lines, classification)
     }
 
@@ -493,7 +654,6 @@ impl Workspace {
             size
         })
     }
-
     fn collect_lines(source: &str, scope: &ScopeInfo) -> Vec<LineAnalysis> {
         todo!("collect_lines")
     }
@@ -568,22 +728,7 @@ impl Workspace {
         );
     }
 }
-fn add_related_line(
-    lines: &mut Vec<LineRelated>,
-    line: usize,
-    file_path: &PathBuf,
-    relation: OwnershipRelation,
-) {
-    if let Some(existing) = lines.iter_mut().find(|x| x.line == line) {
-        existing.relations.push(relation);
-    } else {
-        lines.push(LineRelated {
-            line,
-            file_path: file_path.clone(),
-            relations: vec![relation],
-        });
-    }
-}
+
 fn extract_ident(pat: &syn::Pat) -> Option<&syn::Ident> {
     match pat {
         syn::Pat::Ident(pat_ident) => Some(&pat_ident.ident),
@@ -595,7 +740,6 @@ fn extract_ident(pat: &syn::Pat) -> Option<&syn::Ident> {
         _ => None,
     }
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymRelation {
     /// Source symbol
@@ -609,9 +753,10 @@ pub struct SymRelation {
 }
 #[derive(Debug, Clone)]
 pub struct SymReference {
-    pub name: String,
-    pub role: SymRole,
-    pub span: Span,
+    pub name: String,               // e.g., "bar"
+    pub role: SymRole,              // Declaration, Reference, Mutation, etc.
+    pub span: Span,                 // Exact line/col of *this specific usage*
+    pub resolved_id: Option<usize>, // Links back to its SymInfo
 }
 struct SymNode {
     pub id: SymId,
@@ -635,19 +780,6 @@ pub enum SymRole {
     Expression,
 }
 struct SymLocation;
-
-fn same_span(a: proc_macro2::Span, b: SerializableSpan) -> bool {
-    let a_start = a.start();
-    let a_end = a.end();
-
-    let b_start = b.start();
-    let b_end = b.end();
-
-    a_start.line == b_start.line
-        && a_start.column == b_start.column
-        && a_end.line == b_end.line
-        && a_end.column == b_end.column
-}
 
 struct ResolvedSubject {
     pub name: String,
@@ -702,23 +834,23 @@ pub struct LineRelated {
     pub file_path: PathBuf,
     pub relations: Vec<OwnershipRelation>,
 }
-pub struct LineAnalysis {
-    pub line: usize,
-    pub text: String,
-    pub symbols: Vec<SymReference>,
-    pub flags: LineFlags,
-}
-pub struct LineAnnotation {
-    pub line: usize,
-    pub text: String,
-}
 #[derive(Serialize)]
 pub struct LineSymbol {
     pub line: usize,
     pub name: String,
     pub role: SymRole,
 }
-#[derive(Debug, Clone)]
+pub struct LineAnalysis {
+    pub line: usize,
+    pub text: String,
+    pub flags: LineFlags,
+    pub symbols: Vec<SymReference>,
+}
+pub struct LineAnnotation {
+    pub line: usize,
+    pub text: String,
+}
+#[derive(Default, Debug, Clone)]
 pub struct LineFlags {
     pub in_scope: bool,
     // Does this line directly mention the subject?
@@ -734,6 +866,7 @@ pub struct LineFlags {
     // Optional: why it influences
     pub influence_kind: Option<InfluenceKind>,
 }
+
 #[derive(Debug)]
 pub enum LineKind {
     // Statements
@@ -774,11 +907,6 @@ pub struct LineContext {
     pub kind: LineKind,
     pub span: Span,
 }
-pub fn classify_line(syntax_tree: &syn::File, line: u32) -> LineKind {
-    let mut visitor = LineClassifier { line, result: None };
-    visitor.visit_file(syntax_tree);
-    visitor.result.unwrap_or(LineKind::Unknown)
-}
 struct LineClassifier {
     line: u32,
     result: Option<LineKind>,
@@ -803,11 +931,30 @@ impl<'ast> syn::visit::Visit<'ast> for LineClassifier {
         syn::visit::visit_item_fn(self, node);
     }
 }
+
+fn same_span(a: proc_macro2::Span, b: SerializableSpan) -> bool {
+    let a_start = a.start();
+    let a_end = a.end();
+
+    let b_start = b.start();
+    let b_end = b.end();
+
+    a_start.line == b_start.line
+        && a_start.column == b_start.column
+        && a_end.line == b_end.line
+        && a_end.column == b_end.column
+}
+fn classify_line(syntax_tree: &syn::File, line: u32) -> LineKind {
+    let mut visitor = LineClassifier { line, result: None };
+    visitor.visit_file(syntax_tree);
+    visitor.result.unwrap_or(LineKind::Unknown)
+}
 fn span_contains_line(span: proc_macro2::Span, line: u32) -> bool {
     let start = span.start().line as u32;
     let end = span.end().line as u32;
     line >= start && line <= end
 }
+
 #[derive(Clone, Serialize)]
 pub struct ClickContext {
     pub file: PathBuf,
@@ -946,6 +1093,12 @@ impl SerializableSpan {
 pub struct DummyLineColumn {
     pub line: usize,
     pub column: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeContext {
+    pub subject: Option<ResolvedNode>,
+    pub ancestors: Vec<ResolvedNode>,
 }
 pub struct NodeResolver {
     pub line: usize,
@@ -1102,7 +1255,6 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
     //     syn::visit::visit_local(self, node);
     // }
 }
-
 impl NodeContext {
     // pub fn print_tree(&self) {
     //     for node in &self.ancestors {
@@ -1141,23 +1293,7 @@ impl NodeContext {
         NodeGoal::Unknown
     }
 }
-pub fn resolve_click_context(options: &AnalyzerOptions, source: &str) {
-    if let Some(line) = options.line {
-        let idx = line.saturating_sub(1) as usize;
-        // eprintln!("CLICK:");
-        // eprintln!("  line   : {}", line);
-        // eprintln!("  column : {:?}", options.column);
-        if let Some(source_line) = source.lines().nth(idx) {
-            eprintln!("  source : {}", source_line);
-        }
-        if let Some(column) = options.column {
-            if let Some(source_line) = source.lines().nth(idx) {
-                let ch = source_line.chars().nth(column as usize);
-                eprintln!("  char   : {:?}", ch);
-            }
-        }
-    }
-}
+
 pub struct OwnershipNode {
     pub id: SymId,
     pub name: String,
@@ -1184,15 +1320,6 @@ pub enum OwnershipRelation {
     MoveOwnership,
     Assignment,
 }
-#[derive(Debug, Clone)]
-pub struct OwnershipVisitor {
-    // pub subject: String,
-    subject: ResolvedNode,
-    pub options: AnalyzerOptions,
-    pub related_spans: Vec<proc_macro2::Span>,
-    pub scope_spans: Vec<proc_macro2::Span>,
-    pub related_symbols: Vec<SymReference>,
-}
 // pub struct ResolvedSymbol {
 //     pub name: String,
 //     pub declaration: Span,
@@ -1204,7 +1331,131 @@ pub struct OwnershipVisitor {
 // - Ancestor: An identfiier which influences the ownership of this subject.
 // - Descendents: Identifies who are influenced by this subject
 // - Scope:
+#[derive(Debug, Clone)]
+pub struct OwnershipVisitor {
+    // pub subject: String,
+    subject: ResolvedNode,
+    scopes: Vec<HashMap<String, usize>>,
+    pub scope_spans: Vec<proc_macro2::Span>,
+    next_id: usize,
+    pub options: AnalyzerOptions,
+    pub related_spans: Vec<proc_macro2::Span>,
+    pub related_symbols: Vec<SymReference>,
+}
+impl OwnershipVisitor {
+    pub fn new(subject: ResolvedNode) -> Self {
+        Self {
+            options: AnalyzerOptions::default(),
+            subject,
+            scopes: vec![HashMap::new()], // Start with global/root scope
+            scope_spans: Vec::new(),
+            related_spans: Vec::new(),
+            related_symbols: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    // Helper to enter a new block/scope
+    fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    // Helper to exit a block/scope
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    // Insert a new symbol into the current active scope
+    fn define_symbol(&mut self, name: String) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        if let Some(current_scope) = self.scopes.last_mut() {
+            current_scope.insert(name, id);
+        }
+        id
+    }
+
+    // Look up a symbol by walking from innermost scope outward
+    fn resolve_symbol(&self, name: &str) -> Option<usize> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(&id) = scope.get(name) {
+                return Some(id);
+            }
+        }
+        None
+    }
+}
+// impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
+//     fn visit_type(&mut self, node: &'ast syn::Expr) {}
+//     fn visit_expr(&mut self, node: &'ast syn::Expr) {}
+//     fn visit_block(&mut self, node: &'ast syn::Expr) {}
+//     fn visit_local(&mut self, node: &'ast syn::Expr) {}
+//     fn visit_item_fn(&mut self, node: &'ast syn::Expr) {}
+//     fn visit_expr_path(&mut self, node: &'ast syn::Expr) {}
+// }
 impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
+    fn visit_expr(&mut self, node: &'ast syn::Expr) {
+        match node {
+            syn::Expr::MethodCall(method) => {
+                let method_name = method.method.to_string();
+                if method_name == "clone" {
+                    let span = method.span();
+                    // Flag an explicit clone operation for ownership tracking!
+                }
+            }
+            syn::Expr::Call(call) => {
+                // Check if it's a Box::new or similar constructor
+                if let syn::Expr::Path(expr_path) = &*call.func {
+                    if let Some(segment) = expr_path.path.segments.last() {
+                        if segment.ident == "Box" {
+                            // Flag a heap allocation
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        syn::visit::visit_expr(self, node);
+    }
+    fn visit_type(&mut self, node: &'ast syn::Type) {
+        match node {
+            syn::Type::Path(type_path) => {
+                // Extracts explicit type paths (e.g., String, i32, MyCustomStruct)
+                if let Some(segment) = type_path.path.segments.last() {
+                    let type_name = segment.ident.to_string();
+                    // Track or log type usage here
+                }
+            }
+            syn::Type::Reference(type_ref) => {
+                // Detects explicit references (&T or &mut T)
+                // Useful for tracking borrowing vs ownership
+            }
+            _ => {}
+        }
+        syn::visit::visit_type(self, node);
+    }
+    fn visit_block(&mut self, node: &'ast syn::Block) {
+        let span = node.span();
+        self.scope_spans.push(span); // Track physical code range
+        self.push_scope(); // Push semantic symbol map
+        syn::visit::visit_block(self, node); // Walk children inside the block
+        self.pop_scope(); // Pop symbol map when leaving block
+    }
+    fn visit_local(&mut self, node: &'ast syn::Local) {
+        let span = node.span();
+
+        if let syn::Pat::Ident(pat_ident) = &node.pat {
+            let name = pat_ident.ident.to_string();
+            let id = self.define_symbol(name.clone());
+            self.related_symbols.push(SymReference {
+                name,
+                span,
+                role: SymRole::Declaration,
+                resolved_id: Some(id),
+            });
+        }
+        visit::visit_local(self, node);
+    }
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
         if self.subject.kind == AstNodeKind::Function
             && same_span(node.sig.ident.span(), self.subject.span)
@@ -1213,58 +1464,24 @@ impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
         }
         syn::visit::visit_item_fn(self, node);
     }
-    fn visit_block(&mut self, node: &'ast syn::Block) {
-        let span = node.span();
-        // If your subject was found inside this block,
-        // keep this as a possible parent scope.
-        self.scope_spans.push(span);
-        syn::visit::visit_block(self, node);
-    }
     fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
         let span = node.span();
-
         if let Some(segment) = node.path.segments.last() {
             let name = segment.ident.to_string();
-
             if self.subject.kind == AstNodeKind::Path && same_span(span, self.subject.span) {
                 eprintln!("CLICKED PATH: {}", name);
             }
-
+            let resolved_id = self.resolve_symbol(&name);
             self.related_spans.push(span);
-
             self.related_symbols.push(SymReference {
                 name,
                 span,
                 role: SymRole::Reference,
+                resolved_id: resolved_id
             });
         }
-
-        visit::visit_expr_path(self, node);
+        syn::visit::visit_expr_path(self, node);
     }
-    fn visit_local(&mut self, node: &'ast syn::Local) {
-        if let Some(ident) = extract_ident(&node.pat) {
-            self.related_symbols.push(SymReference {
-                name: ident.to_string(),
-                span: ident.span(),
-                role: SymRole::Declaration,
-            });
-        }
-        visit_local(self, node);
-    }
-}
-fn span_contains_position(span: proc_macro2::Span, line: u32, column: u32) -> bool {
-    let start = span.start();
-    let end = span.end();
-    if line < start.line as u32 || line > end.line as u32 {
-        return false;
-    }
-    if line == start.line as u32 && column < start.column as u32 {
-        return false;
-    }
-    if line == end.line as u32 && column > end.column as u32 {
-        return false;
-    }
-    true
 }
 pub struct OwnershipAnalysisResult {
     pub click: ClickContext,
@@ -1329,15 +1546,7 @@ pub struct LocalInit {
     pub expr: Box<Expr>,
     pub diverge: Option<(Token![else], Box<Expr>)>,
 }
-#[inline]
-fn line_col2(span: proc_macro2::Span) -> ((u32, u32), (u32, u32)) {
-    let start = span.start();
-    let end = span.end();
-    (
-        (start.line as u32, start.column as u32),
-        (end.line as u32, end.column as u32),
-    )
-}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SourcePosition {
     pub line: u32,
@@ -1365,8 +1574,7 @@ fn pos(line: usize, column: usize) -> SourcePosition {
         column: column as u32,
     }
 }
-
-pub struct OwnershipAnalysis {
+struct OwnershipAnalysis {
     pub related_lines: Vec<LineRelated>,
     pub click: ClickContext,
     pub node_context: NodeContext,
@@ -1374,11 +1582,6 @@ pub struct OwnershipAnalysis {
     pub symbols: Vec<LineSymbol>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct NodeContext {
-    pub subject: Option<ResolvedNode>,
-    pub ancestors: Vec<ResolvedNode>,
-}
 #[derive(Serialize)]
 pub struct AnalysisReport {
     pub click: ClickContext,
@@ -1392,17 +1595,6 @@ pub struct AnalysisData {
     pub classification: NodeClassification,
     pub symbols: Vec<LineSymbol>,
 }
-
-#[derive(Serialize)]
-pub struct AnalysisReport2 {
-    pub click: ClickContext,
-    pub graph: Option<InfluenceKind>,
-    pub related_lines: Vec<LineRelated>,
-    pub node_context: Option<NodeContext>,
-    pub classification: Option<NodeClassification>,
-    pub symbols: Vec<LineSymbol>,
-}
-
 pub struct InfluenceGraph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
@@ -1647,3 +1839,15 @@ pub enum NodeClassification {
     Condition,
     Unknown,
 }
+
+// enum SymRole {
+//     FunctionDefinition
+// }
+
+#[derive(Debug, Clone)]
+pub struct SymInfo {
+    pub id: usize,        // Unique symbol ID
+    pub name: String,     // e.g., "bar"
+    pub defined_at: Span, // Where it was born
+}
+

@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::analyzer::{AnalyzerOptions, NodeContext, ownership::{AstNodeKind, NodeClassification, ResolvedNode}};
+use crate::analyzer::*;
+use crate::analyzer::ownership::*;
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -210,7 +211,7 @@ impl<'a> Logger<'a> {
 pub struct Vals<'a> {
     pub options: Option<&'a AnalyzerOptions>,
     pub file_path: Option<&'a PathBuf>,
-    pub context: Option<&'a NodeContext>,
+    pub context: Option<&'a ownership::NodeContext>,
     pub classification: Option<&'a NodeClassification>,
     pub ancestor: Option<&'a AstNodeKind>,
     pub subject: Option<&'a ResolvedNode>,
@@ -236,7 +237,7 @@ impl<'a> Vals<'a> {
         self.options = Some(opts);
         self
     }
-    pub fn context(mut self, ctx: &'a NodeContext) -> Self {
+    pub fn context(mut self, ctx: &'a ownership::NodeContext) -> Self {
         self.context = Some(ctx);
         self
     }

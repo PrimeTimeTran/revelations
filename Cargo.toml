@@ -3,7 +3,7 @@ name = "revelation"
 description = "Revelation helps developers discover hidden patterns in code."
 edition = "2024"
 version = "0.0.1"
-authors = ["Loi Tran"]
+authors = ["Loi Tran"],
 license = "MIT OR Apache-2.0"
 
 documentation = "https://docs.rs/revelation"
