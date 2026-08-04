@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use swc_core::ecma::{
-    ast::{ClassDecl, FnDecl, Pat, VarDeclarator},
-    visit::Visit,
+	ast::{ClassDecl, FnDecl, Pat, VarDeclarator},
+	visit::Visit,
 };
 
 use crate::{analyzer::*, ir::*, parser::ParserContext};
@@ -33,18 +33,18 @@ pub struct TypeScriptAnalyzer;
 // }
 
 struct TsVisitor<'a> {
-    options: &'a AnalyzerOptions,
-    pub symbols: Vec<Sym>,
+	options: &'a AnalyzerOptions,
+	pub symbols: Vec<Sym>,
 }
 
 impl<'a> TsVisitor<'a> {
-    fn visibility(&self, is_export: bool) -> Visibility {
-        if is_export {
-            Visibility::Public
-        } else {
-            Visibility::Private
-        }
-    }
+	fn visibility(&self, is_export: bool) -> Visibility {
+		if is_export {
+			Visibility::Public
+		} else {
+			Visibility::Private
+		}
+	}
 }
 
 // impl Visit for TsVisitor<'_> {

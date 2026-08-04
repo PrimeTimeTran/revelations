@@ -2,35 +2,35 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum AnalysisError {
-    Parse(String),
-    Io(String),
-    Json(String),
-    SerializationError(String),
-    UnsupportedLanguage(String),
-    IoError(String),
+	Parse(String),
+	Io(String),
+	Json(String),
+	SerializationError(String),
+	UnsupportedLanguage(String),
+	IoError(String),
 }
 impl fmt::Display for AnalysisError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AnalysisError::Parse(msg) => {
-                write!(f, "parse error: {}", msg)
-            }
-            AnalysisError::UnsupportedLanguage(lang) => {
-                write!(f, "unsupported language: {}", lang)
-            }
-            AnalysisError::Io(msg) => {
-                write!(f, "io error: {}", msg)
-            }
-            AnalysisError::Json(msg) => {
-                write!(f, "json error: {}", msg)
-            }
-            AnalysisError::SerializationError(msg) => {
-                write!(f, "serialization error: {}", msg)
-            }
-            AnalysisError::IoError(msg) => {
-                write!(f, "io error: {}", msg)
-            }
-        }
-    }
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			AnalysisError::Parse(msg) => {
+				write!(f, "parse error: {}", msg)
+			}
+			AnalysisError::UnsupportedLanguage(lang) => {
+				write!(f, "unsupported language: {}", lang)
+			}
+			AnalysisError::Io(msg) => {
+				write!(f, "io error: {}", msg)
+			}
+			AnalysisError::Json(msg) => {
+				write!(f, "json error: {}", msg)
+			}
+			AnalysisError::SerializationError(msg) => {
+				write!(f, "serialization error: {}", msg)
+			}
+			AnalysisError::IoError(msg) => {
+				write!(f, "io error: {}", msg)
+			}
+		}
+	}
 }
 impl std::error::Error for AnalysisError {}

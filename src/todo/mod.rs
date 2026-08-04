@@ -88,13 +88,15 @@ use syn::visit_mut::VisitMut;
 // use syn::visit_mut::VisitMut;
 
 use syn::{
-    Ident, Result, Token,
-    // ext::IdentExt,
-    // fold::Fold,
-    // parse::discouraged::{AnyDelimiter, Speculative},
-    // parse::{Parse, Parser, Peek},
-    // spanned::Spanned,
-    // token::Token,
+	Ident,
+	Result,
+	Token,
+	// ext::IdentExt,
+	// fold::Fold,
+	// parse::discouraged::{AnyDelimiter, Speculative},
+	// parse::{Parse, Parser, Peek},
+	// spanned::Spanned,
+	// token::Token,
 };
 
 // ============================================================================
@@ -113,9 +115,9 @@ use syn::{
 struct IdentPlayground;
 
 impl IdentPlayground {
-    fn inspect_ident(&self, ident: &Ident) {
-        println!("identifier = {}", ident.unraw());
-    }
+	fn inspect_ident(&self, ident: &Ident) {
+		println!("identifier = {}", ident.unraw());
+	}
 }
 
 // ============================================================================
@@ -136,10 +138,10 @@ impl IdentPlayground {
 struct FoldPlayground;
 
 impl Fold for FoldPlayground {
-    fn fold_ident(&mut self, ident: Ident) -> Ident {
-        println!("folding ident: {}", ident);
-        ident
-    }
+	fn fold_ident(&mut self, ident: Ident) -> Ident {
+		println!("folding ident: {}", ident);
+		ident
+	}
 }
 
 // ============================================================================
@@ -161,15 +163,15 @@ impl Fold for FoldPlayground {
 //   MySyntax { name: foo }
 //
 struct MySyntax {
-    name: Ident,
+	name: Ident,
 }
 
 impl Parse for MySyntax {
-    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        Ok(Self {
-            name: input.parse()?,
-        })
-    }
+	fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+		Ok(Self {
+			name: input.parse()?,
+		})
+	}
 }
 
 // ============================================================================
@@ -187,11 +189,11 @@ impl Parse for MySyntax {
 struct ParserPlayground;
 
 impl ParserPlayground {
-    fn parse_ident(&self) -> Result<Ident> {
-        let parser = |input: syn::parse::ParseStream| input.parse::<Ident>();
+	fn parse_ident(&self) -> Result<Ident> {
+		let parser = |input: syn::parse::ParseStream| input.parse::<Ident>();
 
-        parser.parse_str("hello")
-    }
+		parser.parse_str("hello")
+	}
 }
 
 // ============================================================================
@@ -209,9 +211,9 @@ impl ParserPlayground {
 struct PeekPlayground;
 
 impl PeekPlayground {
-    fn check_keyword(&self, input: syn::parse::ParseStream) -> bool {
-        input.peek(Token![fn])
-    }
+	fn check_keyword(&self, input: syn::parse::ParseStream) -> bool {
+		input.peek(Token![fn])
+	}
 }
 
 // ============================================================================
@@ -251,17 +253,17 @@ struct DelimiterPlayground;
 struct SpeculativePlayground;
 
 impl SpeculativePlayground {
-    fn try_parse(&self, input: syn::parse::ParseStream) -> Result<()> {
-        let fork = input.fork();
+	fn try_parse(&self, input: syn::parse::ParseStream) -> Result<()> {
+		let fork = input.fork();
 
-        // Try parsing on fork.
-        let _maybe_ident: Ident = fork.parse()?;
+		// Try parsing on fork.
+		let _maybe_ident: Ident = fork.parse()?;
 
-        // If successful, advance original stream.
-        input.advance_to(&fork);
+		// If successful, advance original stream.
+		input.advance_to(&fork);
 
-        Ok(())
-    }
+		Ok(())
+	}
 }
 
 // ============================================================================
@@ -282,11 +284,11 @@ impl SpeculativePlayground {
 struct SpanPlayground;
 
 impl SpanPlayground {
-    fn show_span(&self, node: &impl Spanned) {
-        let span = node.span();
+	fn show_span(&self, node: &impl Spanned) {
+		let span = node.span();
 
-        println!("start={:?}, end={:?}", span.start(), span.end());
-    }
+		println!("start={:?}, end={:?}", span.start(), span.end());
+	}
 }
 
 // ============================================================================
@@ -305,8 +307,8 @@ impl SpanPlayground {
 struct TokenPlayground;
 
 impl TokenPlayground {
-    fn expects_fn(&self, input: syn::parse::ParseStream) -> Result<()> {
-        let _token: Token![fn] = input.parse()?;
-        Ok(())
-    }
+	fn expects_fn(&self, input: syn::parse::ParseStream) -> Result<()> {
+		let _token: Token![fn] = input.parse()?;
+		Ok(())
+	}
 }

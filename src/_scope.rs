@@ -13,12 +13,12 @@ use syn::{Ident, Result, Token, visit::Visit};
 pub type ScopeId = u32;
 #[derive(Clone, Debug, Default)]
 pub struct Scope {
-    pub id: ScopeId,
-    // The symbol that created this scope
-    pub owner: SymId,
-    // Names directly declared here
-    pub symbols: HashMap<String, SymId>,
-    pub parent: Option<ScopeId>,
+	pub id: ScopeId,
+	// The symbol that created this scope
+	pub owner: SymId,
+	// Names directly declared here
+	pub symbols: HashMap<String, SymId>,
+	pub parent: Option<ScopeId>,
 }
 
 // impl Scope {
@@ -31,29 +31,29 @@ pub struct Scope {
 //     }
 // }
 pub struct SemanticWorkspace {
-    pub symbols: HashMap<SymId, Sym>,
-    pub scopes: HashMap<ScopeId, Scope>,
-    // indexes
-    pub symbols_by_name: HashMap<String, Vec<SymId>>,
-    pub symbols_by_scope: HashMap<ScopeId, Vec<SymId>>,
-    pub packages_by_name: HashMap<String, SymId>,
+	pub symbols: HashMap<SymId, Sym>,
+	pub scopes: HashMap<ScopeId, Scope>,
+	// indexes
+	pub symbols_by_name: HashMap<String, Vec<SymId>>,
+	pub symbols_by_scope: HashMap<ScopeId, Vec<SymId>>,
+	pub packages_by_name: HashMap<String, SymId>,
 }
 
 #[derive(Clone, Debug)]
 pub enum ScopeKind {
-    Workspace,
-    Package,
-    Module,
-    File,
-    Type,
-    Impl,
-    Function,
-    Block,
+	Workspace,
+	Package,
+	Module,
+	File,
+	Type,
+	Impl,
+	Function,
+	Block,
 }
 impl Default for ScopeKind {
-    fn default() -> Self {
-        ScopeKind::File
-    }
+	fn default() -> Self {
+		ScopeKind::File
+	}
 }
 // #[derive(Clone, Debug, Default)]
 // pub struct ScopedWorkspace {
@@ -91,18 +91,18 @@ impl Default for ScopeKind {
 pub struct WorkspaceGraph {}
 
 pub struct ScopeVisitor<'a> {
-    pub workspace: &'a WorkspaceGraph,
-    // Current lexical location.
-    pub scope_stack: Vec<ScopeId>,
+	pub workspace: &'a WorkspaceGraph,
+	// Current lexical location.
+	pub scope_stack: Vec<ScopeId>,
 
-    // Current file being analyzed.
-    pub file: SymId,
+	// Current file being analyzed.
+	pub file: SymId,
 
-    // Current module path.
-    pub module: SymId,
+	// Current module path.
+	pub module: SymId,
 
-    // Current package/crate.
-    pub package: SymId,
+	// Current package/crate.
+	pub package: SymId,
 }
 
 // impl<'ast, 'a> Visit<'ast> for ScopeVisitor<'a> {

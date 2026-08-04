@@ -1,16 +1,18 @@
 [package]
+authors = ["Loi Tran"]
+
 name = "revelation"
 description = "Revelation helps developers discover hidden patterns in code."
 edition = "2024"
 version = "0.0.1"
-authors = ["Loi Tran"],
+
 license = "MIT OR Apache-2.0"
 
 documentation = "https://docs.rs/revelation"
 homepage = "https://kb-blog-primetimetran.vercel.app/"
 repository = "https://github.com/primetimetran/revelation"
-keywords = ["virtualization","visualization","filesystem", "development-tools", "os"]
-categories = ["virtualization","visualization","filesystem", "development-tools", "os"]
+keywords = ["virtualization", "visualization", "filesystem", "development-tools", "os"]
+categories = ["virtualization", "visualization", "filesystem", "development-tools", "os"]
 
 [dependencies]
 syn.workspace = true
