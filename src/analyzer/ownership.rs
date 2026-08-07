@@ -434,6 +434,7 @@ impl Workspace {
 			line,
 			column,
 			candidates: Vec::new(),
+			current_name: None,
 		};
 		// println!("Candidates:");
 		// for c in &resolver.candidates {
@@ -458,17 +459,20 @@ impl Workspace {
 		let parent_kind = context.ancestors.first().map(|a| &a.kind);
 
 		match (&subject.kind, parent_kind) {
-			// AstNodeKind::Path => NodeClassification::Variable,
-			(AstNodeKind::PatternIdentifier, Some(AstNodeKind::Local | AstNodeKind::LetStatement)) => {
+			(AstNodeKind::PatternIdentifier, Some(AstNodeKind::Local)) => {
 				NodeClassification::VariableDeclaration
 			}
-			(AstNodeKind::Path | AstNodeKind::Identifier | AstNodeKind::PatternIdentifier, _) => {
-				NodeClassification::Variable
-			}
+
+			(AstNodeKind::Local, _) => NodeClassification::VariableDeclaration,
+
+			(AstNodeKind::PatternIdentifier, _) => NodeClassification::Variable,
+
+			(AstNodeKind::Path, _) => NodeClassification::Variable,
+
 			(AstNodeKind::Literal, _) => NodeClassification::Literal,
 			(AstNodeKind::CallExpr, _) => NodeClassification::FunctionCall,
 			(AstNodeKind::BinaryExpr, _) => NodeClassification::BinaryExpression,
-			(AstNodeKind::Local, _) => NodeClassification::VariableDeclaration,
+
 			(AstNodeKind::IfExpr, _) => NodeClassification::Condition,
 			(AstNodeKind::Block, _) => NodeClassification::Scope,
 			_ => NodeClassification::Unknown,
@@ -522,6 +526,7 @@ impl Workspace {
 		let syntax_tree = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
 		Ok((source, syntax_tree))
 	}
+
 	pub fn analyze_ownership_on_click(
 		file_path: &PathBuf,
 		options: &AnalyzerOptions,
@@ -569,10 +574,16 @@ impl Workspace {
 			.subject
 			.clone()
 			.ok_or_else(|| AnalysisError::Parse("No subject node found at position".into()))?;
+
+		// let node = graph.find(subject);
+		// let affected = graph.walk(node);
+		// let subject_name = subject.name.clone();
 		let mut ownership_visitor = OwnershipVisitor {
 			next_id: 0,
-			subject,
-			scopes: Vec::new(),
+			subject: subject.clone(),
+			subject_name: subject.name.clone(),
+			subject_symbol: None,
+			scopes: vec![HashMap::new()],
 			scope_spans: Vec::new(),
 			options: options.clone(),
 			related_spans: Vec::new(),
@@ -580,19 +591,25 @@ impl Workspace {
 		};
 		ownership_visitor.visit_file(&syntax_tree);
 		let scope = Self::find_scope_at_position(&syntax_tree, options);
-		let mut related_lines: Vec<LineRelated> = Vec::new();
+		let related_lines =
+			Self::stage_build_related_lines_from_subject(&subject, &ownership_visitor, file_path);
+		eprintln!("context {:?}", context);
+		eprintln!("related_lines {:?}", related_lines);
+		eprintln!("classification {:?}", classification);
 
-		if let Some(scope_span) = Self::find_scope_at_position(&syntax_tree, options) {
-			for line in scope_span.start().line..=scope_span.end().line {
-				Self::add_relation(
-					&mut related_lines,
-					line,
-					file_path,
-					OwnershipRelation::Scope,
-				);
-			}
-		}
-		for span in ownership_visitor.related_spans {
+		Self::stage_report(context, click, related_lines, classification)
+	}
+
+	pub fn stage_build_related_lines_from_subject(
+		subject: &ResolvedNode,
+		visitor: &OwnershipVisitor,
+		file_path: &PathBuf,
+	) -> Vec<LineRelated> {
+		let mut related_lines = Vec::new();
+
+		for span in &visitor.related_spans {
+			println!("REFERENCE SPAN {:?} -> line {}", span, span.start().line);
+
 			Self::add_relation(
 				&mut related_lines,
 				span.start().line,
@@ -600,8 +617,27 @@ impl Workspace {
 				OwnershipRelation::Reference,
 			);
 		}
-		// let stage_one = Self::analyze_click(&syntax_tree, click, related_lines);
-		Self::stage_report(context, click, related_lines, classification)
+
+		for symbol in &visitor.related_symbols {
+			if symbol.resolved_id == visitor.subject_symbol {
+				let relation = match symbol.role {
+					SymRole::Declaration => Some(OwnershipRelation::Declaration),
+					SymRole::Reference => Some(OwnershipRelation::Reference),
+					_ => None,
+				};
+
+				if let Some(relation) = relation {
+					Self::add_relation(
+						&mut related_lines,
+						symbol.span.start().line,
+						file_path,
+						relation,
+					);
+				}
+			}
+		}
+
+		related_lines
 	}
 
 	fn stage_report(
@@ -618,14 +654,7 @@ impl Workspace {
 			symbols: Vec::new(),
 		};
 		let formatted_output = build_final_analysis(&click, Some(&related_lines));
-		// eprintln!("hi formatted {}", formatted_output);
-		let report = AnalysisReport {
-			click,
-			analysis,
-			formatted_output,
-		};
-		let json_output = serde_json::to_string(&report)?;
-		println!("{}", report.formatted_output);
+
 		// let mut stdout = io::stdout();
 		// stdout
 		//     .write_all(json_output.as_bytes())
@@ -636,6 +665,13 @@ impl Workspace {
 		// stdout
 		//     .flush()
 		//     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
+		let report = AnalysisReport {
+			click,
+			analysis,
+			formatted_output,
+		};
+		let json_output = serde_json::to_string(&report)?;
+		// println!("{}", report.formatted_output);
 		Ok(report)
 	}
 
@@ -705,21 +741,23 @@ impl Workspace {
 		// send_to_client(report);
 	}
 	fn add_relation(
-		lines: &mut Vec<LineRelated>,
+		related_lines: &mut Vec<LineRelated>,
 		line: usize,
 		file_path: &PathBuf,
 		relation: OwnershipRelation,
 	) {
-		let configs = AnalyzeConfig::default();
-		if let Some(existing) = lines.iter_mut().find(|x| x.line == line) {
-			existing.relations.push(relation);
-		} else {
-			lines.push(LineRelated {
-				line,
-				file_path: file_path.clone(),
-				relations: vec![relation],
-			});
+		if let Some(existing) = related_lines.iter_mut().find(|x| x.line == line) {
+			if !existing.relations.contains(&relation) {
+				existing.relations.push(relation);
+			}
+			return;
 		}
+
+		related_lines.push(LineRelated {
+			line,
+			file_path: file_path.clone(),
+			relations: vec![relation],
+		});
 	}
 	fn print_click_report(report: &ClickReport) {
 		Self::print_click_analysis(
@@ -765,7 +803,7 @@ struct SymNode {
 	pub role: SymRole,
 	pub location: SymLocation,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum SymRole {
 	Declaration,
 	Reference,
@@ -1055,6 +1093,8 @@ pub struct SerializableSpan {
 pub struct ResolvedNode {
 	pub kind: AstNodeKind,
 	pub span: SerializableSpan,
+	pub mutable: Option<bool>,
+	pub name: Option<String>,
 }
 impl From<proc_macro2::Span> for SerializableSpan {
 	fn from(span: proc_macro2::Span) -> Self {
@@ -1103,20 +1143,35 @@ pub struct NodeContext {
 pub struct NodeResolver {
 	pub line: usize,
 	pub column: usize,
+	current_name: Option<String>,
 	position: SourcePosition,
 	pub candidates: Vec<ResolvedNode>,
-	pub best: Option<NodeContext>,
-	// pub candidates: Vec<ResolvedNode>,
+	pub best: Option<ResolvedNode>,
 	pub nodes: Vec<AstNodeKind>,
-	pub ancestors: Vec<AstNodeKind>,
+	pub ancestors: Vec<ResolvedNode>,
 }
 impl NodeResolver {
+	fn resolve_file(mut self, file: &syn::File) -> NodeContext {
+		self.visit_file(file);
+
+		self.candidates.sort_by_key(|node| {
+			let start = node.span.start();
+			let end = node.span.end();
+
+			(end.line - start.line, end.column - start.column)
+		});
+
+		for c in &self.candidates {
+			println!("CANDIDATE {:?} {:?}", c.kind, c.name);
+		}
+
+		NodeContext {
+			subject: self.candidates.first().cloned(),
+			ancestors: self.candidates,
+		}
+	}
 	fn contains(&self, span: Span) -> bool {
 		let ((start_line, start_column), (end_line, end_column)) = line_col(span);
-		// println!(
-		//     "CHECK {}:{} -> {}:{} AGAINST {}:{}",
-		//     start_line, start_column, end_line, end_column, self.line, self.column
-		// );
 		let after_start =
 			self.line > start_line || (self.line == start_line && self.column >= start_column);
 		let before_end = self.line < end_line || (self.line == end_line && self.column <= end_column);
@@ -1124,23 +1179,6 @@ impl NodeResolver {
 	}
 }
 impl NodeResolver {
-	fn check(&mut self, kind: AstNodeKind, span: proc_macro2::Span) {
-		let start = span.start();
-		let end = span.end();
-
-		// println!(
-		//     "{:?}: {}:{} -> {}:{} | CLICK {}:{}",
-		//     kind, start.line, start.column, end.line, end.column, self.line, self.column
-		// );
-
-		if self.contains(span) {
-			// println!("  ✅ MATCH");
-			self.candidates.push(ResolvedNode {
-				kind,
-				span: span.into(),
-			});
-		}
-	}
 	pub fn resolve(mut self) -> NodeContext {
 		self.candidates.sort_by_key(|node| {
 			let start = node.span.start();
@@ -1154,20 +1192,76 @@ impl NodeResolver {
 		}
 	}
 }
+impl<'ast> NodeResolver {
+	fn check(&mut self, kind: AstNodeKind, span: proc_macro2::Span) {
+		let contains = self.contains(span);
+		println!("CHECK {:?} contains={} span={:?}", kind, contains, span);
+		if contains {
+			self.candidates.push(ResolvedNode {
+				kind,
+				name: None,
+				span: span.into(),
+				mutable: Some(false),
+			});
+		}
+	}
+	fn check_with_name(&mut self, kind: AstNodeKind, span: proc_macro2::Span, name: Option<String>) {
+		if self.contains(span) {
+			self.candidates.push(ResolvedNode {
+				kind,
+				name,
+				span: span.into(),
+				mutable: Some(false),
+			});
+		}
+	}
+	fn check_with_metadata(
+		&mut self,
+		kind: AstNodeKind,
+		span: proc_macro2::Span,
+		name: Option<String>,
+		mutable: Option<bool>,
+	) {
+		if self.contains(span) {
+			self.candidates.push(ResolvedNode {
+				kind,
+				span: span.into(),
+				name,
+				mutable,
+			});
+		}
+	}
+}
 impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 	fn visit_pat_ident(&mut self, node: &'ast syn::PatIdent) {
-		self.check(AstNodeKind::PatternIdentifier, node.span());
-		// println!("PAT IDENT 1 {:?}", node.ident);
+		self.check_with_name(
+			AstNodeKind::PatternIdentifier,
+			node.span(),
+			Some(node.ident.to_string()),
+		);
 		syn::visit::visit_pat_ident(self, node);
-		// println!("PAT IDENT {:?}", node.ident);
+	}
+
+	fn visit_local(&mut self, node: &'ast syn::Local) {
+		let (name, mutable) = match &node.pat {
+			syn::Pat::Ident(pat) => (Some(pat.ident.to_string()), Some(pat.mutability.is_some())),
+			_ => (None, None),
+		};
+
+		self.check_with_metadata(AstNodeKind::Local, node.span(), name, mutable);
+
+		syn::visit::visit_local(self, node);
 	}
 	fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
-		self.check(AstNodeKind::Path, node.span());
+		let name = node
+			.path
+			.segments
+			.last()
+			.map(|segment| segment.ident.to_string());
+
+		self.check_with_name(AstNodeKind::Path, node.span(), name);
+
 		syn::visit::visit_expr_path(self, node);
-	}
-	fn visit_local(&mut self, node: &'ast syn::Local) {
-		self.check(AstNodeKind::Local, node.span());
-		syn::visit::visit_local(self, node);
 	}
 	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
 		if self.contains(node.span()) {
@@ -1181,17 +1275,6 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 		}
 		syn::visit::visit_block(self, node);
 	}
-	// fn visit_local(&mut self, node: &'ast syn::Local) {
-	//     let span = node
-	//         .init
-	//         .as_ref()
-	//         .map(|init| init.expr.span())
-	//         .unwrap_or(node.span());
-
-	//     if self.contains(span) {
-	//         self.nodes.push(AstNodeKind::Local);
-	//     }
-	//     syn::visit::visit_local(self, node);
 
 	fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
 		if self.contains(node.span()) {
@@ -1218,50 +1301,8 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 		}
 		syn::visit::visit_expr_lit(self, node);
 	}
-	// fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
-	//     self.check(
-	//         AstNodeKind::PathExpr,
-	//         node.span(),
-	//     );
-	//     syn::visit::visit_expr_path(self, node);
-	// }
-	// fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
-	//     self.check(
-	//         AstNodeKind::BinaryExpr,
-	//         node.span(),
-	//     );
-	//     syn::visit::visit_expr_binary(self, node);
-	// }
-	// fn visit_expr_lit(&mut self, node: &'ast syn::ExprLit) {
-	//     self.check(
-	//         AstNodeKind::Literal,
-	//         node.span(),
-	//     );
-	//     syn::visit::visit_expr_lit(self, node);
-	// }
-	// fn visit_expr_if(&mut self, node: &'ast syn::ExprIf) {
-	//     self.check(
-	//         AstNodeKind::IfExpression,
-	//         node.span(),
-	//     );
-	//     syn::visit::visit_expr_if(self, node);
-	// }
-	// fn visit_local(&mut self, node: &'ast syn::Local) {
-	//     self.check(
-	//         AstNodeKind::LetStatement,
-	//         node.span(),
-	//     );
-	//     syn::visit::visit_local(self, node);
-	// }
 }
-impl NodeContext {
-	// pub fn print_tree(&self) {
-	//     for node in &self.ancestors {
-	//         let start = node.span.start();
-	//         println!("{:?} @ {}:{}", node.kind, start.line, start.column);
-	//     }
-	// }
-}
+impl NodeContext {}
 #[derive(Debug, Clone)]
 pub enum NodeGoal {
 	Expression,
@@ -1309,7 +1350,7 @@ pub enum OwnershipRole {
 	Clone,
 	Usage,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum OwnershipRelation {
 	Scope,
 	Declaration,
@@ -1332,8 +1373,10 @@ pub enum OwnershipRelation {
 // - Scope:
 #[derive(Debug, Clone)]
 pub struct OwnershipVisitor {
-	// pub subject: String,
 	subject: ResolvedNode,
+	pub subject_name: Option<String>,
+	subject_symbol: Option<usize>,
+
 	scopes: Vec<HashMap<String, usize>>,
 	pub scope_spans: Vec<proc_macro2::Span>,
 	next_id: usize,
@@ -1342,18 +1385,19 @@ pub struct OwnershipVisitor {
 	pub related_symbols: Vec<SymReference>,
 }
 impl OwnershipVisitor {
-	pub fn new(subject: ResolvedNode) -> Self {
+	pub fn new(subject: ResolvedNode, subject_name: Option<String>) -> Self {
 		Self {
 			options: AnalyzerOptions::default(),
 			subject,
-			scopes: vec![HashMap::new()], // Start with global/root scope
+			subject_name,
+			subject_symbol: None,
+			scopes: vec![HashMap::new()],
 			scope_spans: Vec::new(),
 			related_spans: Vec::new(),
 			related_symbols: Vec::new(),
 			next_id: 0,
 		}
 	}
-
 	// Helper to enter a new block/scope
 	fn push_scope(&mut self) {
 		self.scopes.push(HashMap::new());
@@ -1399,16 +1443,12 @@ impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
 				let method_name = method.method.to_string();
 				if method_name == "clone" {
 					let span = method.span();
-					// Flag an explicit clone operation for ownership tracking!
 				}
 			}
 			syn::Expr::Call(call) => {
-				// Check if it's a Box::new or similar constructor
 				if let syn::Expr::Path(expr_path) = &*call.func {
 					if let Some(segment) = expr_path.path.segments.last() {
-						if segment.ident == "Box" {
-							// Flag a heap allocation
-						}
+						if segment.ident == "Box" {}
 					}
 				}
 			}
@@ -1442,10 +1482,14 @@ impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
 	}
 	fn visit_local(&mut self, node: &'ast syn::Local) {
 		let span = node.span();
-
 		if let syn::Pat::Ident(pat_ident) = &node.pat {
 			let name = pat_ident.ident.to_string();
 			let id = self.define_symbol(name.clone());
+			println!("DEFINE {} => {} subject={:?}", name, id, self.subject_name);
+			if self.subject_name.as_deref() == Some(&name) {
+				println!("FOUND SUBJECT SYMBOL {}", id);
+				self.subject_symbol = Some(id);
+			}
 			self.related_symbols.push(SymReference {
 				name,
 				span,
@@ -1456,29 +1500,61 @@ impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
 		visit::visit_local(self, node);
 	}
 	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-		if self.subject.kind == AstNodeKind::Function
-			&& same_span(node.sig.ident.span(), self.subject.span)
-		{
-			self.scope_spans.push(node.span());
-		}
+		self.push_scope();
+
 		syn::visit::visit_item_fn(self, node);
+
+		self.pop_scope();
+	}
+	// fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+	// 	if self.subject.kind == AstNodeKind::Function
+	// 		&& same_span(node.sig.ident.span(), self.subject.span)
+	// 	{
+	// 		self.scope_spans.push(node.span());
+	// 	}
+	// 	syn::visit::visit_item_fn(self, node);
+	// }
+	// fn visit_pat_ident(&mut self, node: &'ast syn::PatIdent) {
+	//    self.candidates.push(ResolvedNode {
+	//        kind: AstNodeKind::PatternIdentifier,
+	//        span: node.span().into(),
+	//        mutable: Some(node.mutability.is_some()),
+	//        name: Some(node.ident.to_string()),
+	//    });
+
+	//    syn::visit::visit_pat_ident(self, node);
+	// }
+	fn visit_macro(&mut self, node: &'ast syn::Macro) {
+		println!("MACRO {:?}", node.path);
+		let tokens = node.tokens.to_string();
+		println!("tokens={}", tokens);
+		syn::visit::visit_macro(self, node);
 	}
 	fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
 		let span = node.span();
+
 		if let Some(segment) = node.path.segments.last() {
 			let name = segment.ident.to_string();
-			if self.subject.kind == AstNodeKind::Path && same_span(span, self.subject.span) {
-				eprintln!("CLICKED PATH: {}", name);
-			}
+
 			let resolved_id = self.resolve_symbol(&name);
-			self.related_spans.push(span);
+
+			println!("REFERENCE {} => {:?} span={:?}", name, resolved_id, span);
+
 			self.related_symbols.push(SymReference {
-				name,
+				name: name.clone(),
 				span,
 				role: SymRole::Reference,
-				resolved_id: resolved_id,
+				resolved_id,
 			});
+
+			if let (Some(resolved_id), Some(subject_id)) = (resolved_id, self.subject_symbol) {
+				if resolved_id == subject_id {
+					println!("MATCH SUBJECT {}", name);
+					self.related_spans.push(span);
+				}
+			}
 		}
+
 		syn::visit::visit_expr_path(self, node);
 	}
 }
@@ -1594,12 +1670,23 @@ pub struct AnalysisData {
 	pub classification: NodeClassification,
 	pub symbols: Vec<LineSymbol>,
 }
+pub type NodeId = usize;
 pub struct InfluenceGraph {
-	pub nodes: Vec<GraphNode>,
+	pub nodes: HashMap<NodeId, GraphNode>,
 	pub edges: Vec<GraphEdge>,
 }
-pub struct GraphNode;
-pub struct GraphEdge;
+pub struct GraphNode {
+	pub id: NodeId,
+	pub name: String,
+	pub kind: AstNodeKind,
+	pub span: proc_macro2::Span,
+}
+pub struct GraphEdge {
+	pub from: NodeId,
+	pub to: NodeId,
+	pub relation: RelationKind,
+	pub influence: InfluenceKind,
+}
 pub enum ScopeKind {}
 pub struct ScopeContext {
 	pub kind: ScopeKind,
@@ -1639,6 +1726,10 @@ pub enum RelationKind {
 	// Usage
 	References,
 	Calls,
+
+	// Add:
+	PassedAsArgument,
+	ReturnedFrom,
 }
 #[derive(Clone, Debug, Serialize)]
 pub enum InfluenceKind {
@@ -1838,14 +1929,485 @@ pub enum NodeClassification {
 	Condition,
 	Unknown,
 }
-
-// enum SymRole {
-//     FunctionDefinition
-// }
-
 #[derive(Debug, Clone)]
 pub struct SymInfo {
 	pub id: usize,        // Unique symbol ID
 	pub name: String,     // e.g., "bar"
 	pub defined_at: Span, // Where it was born
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	enum Occurrence {
+		First,
+		Last,
+	}
+	fn source_line(source: &str, contains: &str) -> usize {
+		source
+			.lines()
+			.position(|line| line.contains(contains))
+			.unwrap()
+			+ 1
+	}
+	fn position_of(source: &str, needle: &str) -> (usize, usize) {
+		for (line, text) in source.lines().enumerate() {
+			if let Some(column) = text.find(needle) {
+				return (line + 1, column);
+			}
+		}
+
+		panic!("could not find {}", needle);
+	}
+	fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
+		let syntax_tree = syn::parse_file(source).unwrap();
+		let resolver = NodeResolver {
+			line,
+			column,
+			current_name: None,
+			position: pos(line, column),
+			candidates: Vec::new(),
+			best: None,
+			nodes: Vec::new(),
+			ancestors: Vec::new(),
+		};
+
+		resolver.resolve_file(&syntax_tree)
+	}
+	fn position_of_after(source: &str, needle: &str, start_line: usize) -> (usize, usize) {
+		for (line, text) in source.lines().enumerate().skip(start_line - 1) {
+			if let Some(column) = text.find(needle) {
+				return (line + 1, column);
+			}
+		}
+
+		panic!("could not find {} after line {}", needle, start_line);
+	}
+	fn positions_of(source: &str, needle: &str) -> Vec<(usize, usize)> {
+		let mut result = Vec::new();
+
+		for (line, text) in source.lines().enumerate() {
+			let mut offset = 0;
+
+			while let Some(column) = text[offset..].find(needle) {
+				let absolute = offset + column;
+				result.push((line + 1, absolute));
+				offset = absolute + needle.len();
+			}
+		}
+
+		result
+	}
+	fn resolve_click_on(source: &str, name: &str, occurrence: Occurrence) -> NodeContext {
+		let (line, column) = match occurrence {
+			Occurrence::First => position_of(source, name),
+			Occurrence::Last => position_of_last(source, name),
+		};
+
+		resolve_click(source, line, column)
+	}
+	// fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
+	// 	let syntax_tree = syn::parse_file(source).unwrap();
+
+	// 	let resolver = NodeResolver {
+	// 		line,
+	// 		column,
+	// 		current_name: None,
+	// 		position: pos(line, column),
+	// 		candidates: Vec::new(),
+	// 		best: None,
+	// 		nodes: Vec::new(),
+	// 		ancestors: Vec::new(),
+	// 	};
+
+	// 	resolver.resolve_file(&syntax_tree)
+	// }
+
+	// fn position_of(source: &str, needle: &str) -> (usize, usize) {
+	// 	for (line, text) in source.lines().enumerate() {
+	// 		if let Some(column) = text.find(needle) {
+	// 			return (line + 1, column);
+	// 		}
+	// 	}
+
+	// 	panic!("could not find {}", needle);
+	// }
+
+	fn position_of_last(source: &str, needle: &str) -> (usize, usize) {
+		let mut found = None;
+
+		for (line, text) in source.lines().enumerate() {
+			if let Some(column) = text.rfind(needle) {
+				found = Some((line + 1, column));
+			}
+		}
+
+		found.expect("could not find occurrence")
+	}
+
+	// fn assert_subject(context: &NodeContext, expected: AstNodeKind) {
+	// 	let subject = context.subject.as_ref().expect("expected subject");
+
+	// 	assert_eq!(subject.kind, expected);
+	// }
+
+	// fn assert_local(context: &NodeContext, mutable: Option<bool>) {
+	// 	let local = context
+	// 		.ancestors
+	// 		.iter()
+	// 		.find(|node| node.kind == AstNodeKind::Local)
+	// 		.expect("expected Local ancestor");
+
+	// 	assert_eq!(local.mutable, mutable);
+	// }
+	macro_rules! assert_subject {
+		($context:expr, $kind:expr) => {{
+			let subject = $context.subject.as_ref().expect("expected subject");
+
+			assert_eq!(subject.kind, $kind);
+		}};
+	}
+	macro_rules! assert_local {
+		($context:expr, mutable = $expected:expr) => {{
+			let local = $context
+				.ancestors
+				.iter()
+				.find(|node| node.kind == AstNodeKind::Local)
+				.expect("expected Local ancestor");
+			assert_eq!(local.mutable, $expected);
+		}};
+	}
+	// fn visit_expr_macro(&mut self, node: &'ast syn::ExprMacro) {
+	// 	println!("MACRO {:?}", node.mac.path);
+	// 	syn::visit::visit_expr_macro(self, node);
+	// }
+	// macro_rules! assert_subject {
+	// 	($context:expr, $expected:expr) => {{
+	// 		let subject = $context.subject.as_ref().expect("expected subject");
+
+	// 		assert_eq!(subject.kind, $expected);
+	// 	}};
+	// }
+
+	fn analyze_click_on(source: &str, name: &str, occurrence: Occurrence) -> Vec<LineRelated> {
+		let (line, column) = match occurrence {
+			Occurrence::First => position_of(source, name),
+			Occurrence::Last => position_of_last(source, name),
+		};
+
+		let syntax_tree = syn::parse_file(source).unwrap();
+
+		let context = resolve_click(source, line, column);
+
+		let subject = context.subject.expect("expected subject");
+		println!("CLICK {}:{} on {}", line, column, name);
+		let mut visitor = OwnershipVisitor {
+			subject: subject.clone(),
+			subject_name: subject.name.clone(),
+			subject_symbol: None,
+			related_spans: vec![],
+			related_symbols: vec![],
+			scopes: vec![HashMap::new()],
+			scope_spans: Vec::new(),
+			next_id: 0,
+
+			options: AnalyzerOptions {
+				line: Some(line as u32),
+				column: Some(column as u32),
+				..Default::default()
+			},
+		};
+		visitor.visit_file(&syntax_tree);
+
+		Workspace::stage_build_related_lines_from_subject(&subject, &visitor, &PathBuf::from("test.rs"))
+	}
+	fn assert_line(related: &[LineRelated], line: usize, relation: OwnershipRelation) {
+		let entry = related
+			.iter()
+			.find(|x| x.line == line)
+			.unwrap_or_else(|| panic!("missing line {}", line));
+
+		assert!(
+			entry.relations.contains(&relation),
+			"line {} missing {:?}, got {:?}",
+			line,
+			relation,
+			entry.relations
+		);
+	}
+	fn assert_lines(related: &[LineRelated], expected: Vec<(usize, OwnershipRelation)>) {
+		for (line, relation) in expected {
+			let found = related
+				.iter()
+				.find(|entry| entry.line == line)
+				.unwrap_or_else(|| panic!("missing line {}", line));
+
+			assert!(
+				found.relations.contains(&relation),
+				"line {} missing {:?}, got {:?}",
+				line,
+				relation,
+				found.relations
+			);
+		}
+	}
+	fn assert_subject_name(context: &NodeContext, expected: &str) {
+		let subject = context.subject.as_ref().expect("expected subject");
+
+		assert_eq!(subject.name.as_deref(), Some(expected));
+	}
+
+	#[test]
+	fn click_immutable_variable_declaration() {
+		let source = r#"
+	fn main() {
+	let item = "hello";
+	}
+	"#;
+
+		let context = resolve_click_on(source, "item", Occurrence::First);
+
+		assert_subject!(&context, AstNodeKind::PatternIdentifier);
+		assert_subject_name(&context, "item");
+		assert_local!(context, mutable = Some(false));
+	}
+	#[test]
+	fn resolves_variable_usage_name() {
+		let source = r#"
+	fn main() {
+	let item = "1";
+	let other = item;
+	}
+	"#;
+
+		let context = resolve_click_on(source, "item", Occurrence::Last);
+
+		assert_subject!(&context, AstNodeKind::Path);
+		assert_subject_name(&context, "item");
+	}
+
+	#[test]
+	fn resolves_variable_declaration() {
+		let source = r#"
+	fn main() {
+    let item = "1";
+	}
+	"#;
+
+		let (line, column) = position_of(source, "item");
+
+		let context = resolve_click(source, line, column);
+
+		let subject = context.subject.expect("expected subject");
+
+		assert_eq!(subject.kind, AstNodeKind::PatternIdentifier);
+
+		let local = context
+			.ancestors
+			.iter()
+			.find(|x| x.kind == AstNodeKind::Local)
+			.expect("expected Local ancestor");
+
+		assert_eq!(local.mutable, Some(false));
+	}
+	#[test]
+	fn resolves_variable_usage_as_path() {
+		let source = r#"
+	fn main() {
+    let item = "1";
+    let other = item;
+	}
+	"#;
+		let positions = positions_of(source, "item");
+
+		let (line, column) = positions[1];
+
+		let context = resolve_click(source, line, column);
+
+		let subject = context.subject.expect("expected subject");
+
+		assert_eq!(subject.kind, AstNodeKind::Path);
+	}
+	#[test]
+	fn resolves_mutable_variable_declaration() {
+		let source = r#"
+	fn main() {
+    let mut item = "1";
+	}
+	"#;
+
+		let (line, column) = position_of(source, "item");
+
+		let context = resolve_click(source, line, column);
+
+		let local = context
+			.ancestors
+			.iter()
+			.find(|x| x.kind == AstNodeKind::Local)
+			.expect("expected Local ancestor");
+
+		assert_eq!(local.mutable, Some(true));
+	}
+	#[test]
+	fn does_not_match_other_variables() {
+		let source = r#"
+	fn main() {
+    let item = "1";
+    let other = "2";
+	}
+	"#;
+
+		let (line, column) = position_of(source, "other");
+
+		let context = resolve_click(source, line, column);
+
+		let subject = context.subject.expect("expected subject");
+
+		assert_eq!(subject.kind, AstNodeKind::PatternIdentifier);
+	}
+	// #[test]
+	// fn click_immutable_variable_declaration() {
+	// 	let source = r#"
+	// fn main() {
+	//    let item = "hello";
+	// }
+	// "#;
+	// 	let context = resolve_click_on(source, "item", Occurrence::First);
+
+	// 	assert_subject(&context, AstNodeKind::PatternIdentifier);
+
+	// 	assert_local!(&context, Some(false));
+	// }
+	#[test]
+	fn click_mutable_variable_declaration() {
+		let source = r#"
+	fn main() {
+    let mut item = 1;
+	}
+	"#;
+
+		let context = resolve_click_on(source, "item", Occurrence::First);
+
+		assert_local!(context, mutable = Some(true));
+	}
+	#[test]
+	fn click_variable_usage() {
+		let source = r#"
+	fn main() {
+    let item = "1";
+    let x = item;
+	}
+	"#;
+
+		let (line, column) = position_of_last(source, "item");
+
+		println!("CLICK {}:{}", line, column);
+
+		let context = resolve_click(source, line, column);
+
+		println!("CLICK {}:{} on {}", line, column, "item");
+
+		println!("{:#?}", context);
+
+		let subject = context.subject.expect("expected subject");
+
+		assert_eq!(subject.kind, AstNodeKind::Path);
+	}
+	#[test]
+	fn click_variable_tracks_all_references() {
+		let source = r#"fn main() {
+	let item = "hello";
+	let other = item;
+	let third = item;
+	}
+	"#;
+
+		let analysis = analyze_click_on(&test_source(source), "item", Occurrence::First);
+
+		assert_line(&analysis, 2, OwnershipRelation::Declaration);
+		assert_line(&analysis, 3, OwnershipRelation::Reference);
+		assert_line(&analysis, 4, OwnershipRelation::Reference);
+	}
+	#[test]
+	fn detects_move() {
+		let source = r#"
+	fn main() {
+	let item = String::new();
+	let other = item;
+	}
+	"#;
+
+		let analysis = analyze_click_on(source, "item", Occurrence::First);
+	}
+	#[test]
+	fn detects_borrow() {
+		let source = r#"
+	fn main() {
+	let item = String::new();
+	let other = &item;
+	}
+	"#;
+	}
+	#[test]
+	fn handles_shadowed_variables() {
+		let source = r#"
+	fn main() {
+	let item = 1;
+	{
+    let item = 2;
+    println!("{}", item);
+	}
+
+	println!("{}", item);
+	}
+	"#;
+
+		let analysis = analyze_click_on(source, "item", Occurrence::First);
+	}
+	#[test]
+	fn detects_explicit_type() {
+		let source = r#"
+	fn main() {
+    let item: i32 = 1;
+	}
+	"#;
+
+		let node = resolve_click_on(source, "item", Occurrence::First);
+
+		// assert_eq!(node.type_name, Some("i32".into()));
+	}
+	#[test]
+	fn does_not_cross_function_boundaries() {
+		let source = r#"
+	fn foo(item: i32) {
+    println!("{}", item);
+	}
+
+	fn main() {
+    let item = "hello";
+    println!("{}", item);
+	}
+	"#;
+
+		let analysis = analyze_click_on(source, "item", Occurrence::Last);
+
+		assert_line(&analysis, 7, OwnershipRelation::Declaration);
+		assert_line(&analysis, 8, OwnershipRelation::Reference);
+
+		// should NOT contain foo's itemf
+	}
+}
+
+#[derive(Debug)]
+pub struct VariableMetadata {
+	pub name: String,
+	pub mutable: bool,
+	pub ty: Option<String>,
+}
+fn parse_test_source(source: &str) -> syn::File {
+	syn::parse_file(source.trim_start()).unwrap()
+}
+
+fn test_source(source: &str) -> String {
+	source.strip_prefix('\n').unwrap_or(source).to_string()
 }
