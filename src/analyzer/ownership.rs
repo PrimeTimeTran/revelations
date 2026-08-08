@@ -369,21 +369,22 @@ impl Workspace {
 	) -> Vec<LineRelated> {
 		let mut related_lines = Vec::new();
 
-		let downstream = Self::build_downstream(&ownership.graph, &ownership.subject_id.unwrap());
+		let subject_id = ownership.subject_id.unwrap();
+		let downstream = Self::build_downstream(&ownership.graph, &subject_id);
 
 		for symbol in &ownership.symbols {
 			let Some(id) = symbol.resolved_id else {
 				continue;
 			};
 
-			let is_subject = Some(id) == ownership.subject_id;
+			let is_subject = id == subject_id;
 			let is_downstream = downstream.contains(&id);
 
 			if !is_subject && !is_downstream {
 				continue;
 			}
 
-			// The symbol itself still has its normal relationship.
+			// Always keep the symbol's own relationship.
 			Self::add_relation(
 				&mut related_lines,
 				symbol.span.start().line,
@@ -391,7 +392,13 @@ impl Workspace {
 				symbol.relation.clone(),
 			);
 
-			// Overlay semantic relationships carried by graph edges.
+			// A symbol can have MORE than one relationship.
+			// For example:
+			//
+			//     spam1 = foo(num1)
+			//
+			// spam1 is Declaration + Return.
+			//
 			for edge in &ownership.graph.edges {
 				if edge.to != id {
 					continue;
@@ -452,10 +459,10 @@ pub struct SymRelation {
 }
 #[derive(Debug, Clone)]
 pub struct SymReference {
-	pub name: String,               // e.g., "bar"
-	pub role: SymRole,              // Declaration, Reference, Mutation, etc.
-	pub span: Span,                 // Exact line/col of *this specific usage*
-	pub resolved_id: Option<usize>, // Links back to its SymInfo
+	pub name: String,                // e.g., "bar"
+	pub role: SymRole,               // Declaration, Reference, Mutation, etc.
+	pub span: Span,                  // Exact line/col of *this specific usage*
+	pub resolved_id: Option<NodeId>, // Links back to its SymInfo
 	pub relation: OwnershipRelation,
 }
 struct SymNode {
@@ -821,9 +828,14 @@ struct NodeResolver {
 	pub best: Option<ResolvedNode>,
 	pub nodes: Vec<AstNodeKind>,
 	pub ancestors: Vec<ResolvedNode>,
-	next_id: NodeId,
+	next_id: usize,
 }
 impl NodeResolver {
+	fn next_node_id(&mut self) -> NodeId {
+		let id = NodeId(self.next_id);
+		self.next_id += 1;
+		id
+	}
 	pub fn new(line: usize, column: usize, position: SourcePosition) -> Self {
 		Self {
 			line,
@@ -863,11 +875,6 @@ impl NodeResolver {
 			subject: self.candidates.first().cloned(),
 			ancestors: self.candidates,
 		}
-	}
-	fn next_node_id(&mut self) -> NodeId {
-		let id = self.next_id;
-		self.next_id += 1;
-		id
 	}
 
 	fn contains(&self, span: Span) -> bool {
@@ -977,6 +984,12 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 		}
 		syn::visit::visit_block(self, node);
 	}
+	fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
+		if self.contains(node.span()) {
+			self.nodes.push(AstNodeKind::CallExpr);
+		}
+		syn::visit::visit_expr_call(self, node);
+	}
 	fn visit_item_fn(&mut self, node: &syn::ItemFn) {
 		self.check_with_name(
 			AstNodeKind::Function,
@@ -1008,12 +1021,7 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 		}
 		syn::visit::visit_expr_if(self, node);
 	}
-	fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
-		if self.contains(node.span()) {
-			self.nodes.push(AstNodeKind::CallExpr);
-		}
-		syn::visit::visit_expr_call(self, node);
-	}
+
 	fn visit_expr_lit(&mut self, node: &'ast syn::ExprLit) {
 		if self.contains(node.span()) {
 			self.nodes.push(AstNodeKind::Literal);
@@ -1096,22 +1104,29 @@ pub enum OwnershipRelation {
 // - Scope:
 #[derive(Debug)]
 pub struct OwnershipVisitor<'a> {
+	// ── Analysis input ─────────────────────────────
 	subject: ResolvedNode,
 	pub subject_name: Option<String>,
-	subject_symbol: Option<usize>,
-	scopes: Vec<HashMap<String, NodeId>>,
-	function_depth: usize,
-
-	pub scope_spans: Vec<proc_macro2::Span>,
-	next_id: NodeId,
 	pub options: AnalyzerOptions,
+
+	// ── Symbol resolution ─────────────────────────
+	scopes: Vec<HashMap<String, NodeId>>,
+	next_id: usize,
+
+	// ── Traversal state ────────────────────────────
+	function_depth: usize,
+	current_function: Option<NodeId>,
+
+	// ── Results ────────────────────────────────────
+	pub subject_symbol: Option<NodeId>,
 	pub related_spans: Vec<proc_macro2::Span>,
 	pub related_symbols: Vec<SymReference>,
 	pub graph: &'a mut Graph,
 
-	current_function: Option<String>,
-	call_target: Option<String>,
-	call_result: Option<NodeId>,
+	// ── AST bookkeeping ────────────────────────────
+	pub scope_spans: Vec<proc_macro2::Span>,
+	last_call_id: Option<NodeId>,
+	call_ids: HashMap<(usize, usize), NodeId>,
 }
 impl<'a> OwnershipVisitor<'a> {
 	pub fn new(
@@ -1125,10 +1140,10 @@ impl<'a> OwnershipVisitor<'a> {
 			subject,
 			options,
 			next_id: 0,
+			last_call_id: None,
 			subject_name,
 			function_depth: 0,
-			call_result: None,
-			call_target: None,
+			call_ids: HashMap::new(),
 			subject_symbol: None,
 			current_function: None,
 			scope_spans: Vec::new(),
@@ -1137,19 +1152,24 @@ impl<'a> OwnershipVisitor<'a> {
 			scopes: vec![HashMap::new()],
 		}
 	}
+
+	fn next_node_id(&mut self) -> NodeId {
+		let id = NodeId(self.next_id);
+		self.next_id += 1;
+		id
+	}
 	fn push_scope(&mut self) {
 		self.scopes.push(HashMap::new());
 	}
 	fn pop_scope(&mut self) {
 		self.scopes.pop();
 	}
-	fn define_symbol(&mut self, name: String) -> usize {
-		let id = self.next_id;
+	fn define_symbol(&mut self, name: String) -> NodeId {
+		let id = NodeId(self.next_id);
 		self.next_id += 1;
 		self.scopes.last_mut().unwrap().insert(name.clone(), id);
 		if self.subject_name.as_deref() == Some(&name) {
 			self.subject_symbol = Some(id);
-			// println!("FOUND SUBJECT SYMBOL {}", id);
 		}
 		id
 	}
@@ -1199,6 +1219,37 @@ impl<'a> OwnershipVisitor<'a> {
 			}
 		}
 	}
+	fn get_or_create_call_id(&mut self, call: &syn::ExprCall) -> NodeId {
+		let key = (call.span().start().line, call.span().start().column);
+
+		if let Some(&id) = self.call_ids.get(&key) {
+			return id;
+		}
+
+		let id = self.define_symbol(format!("<call:{}:{}>", key.0, key.1));
+
+		self.call_ids.insert(key, id);
+		id
+	}
+
+	fn call_id_for3(&self, call: &syn::ExprCall) -> Option<NodeId> {
+		let start = call.span().start();
+		self.call_ids.get(&(start.line, start.column)).copied()
+	}
+	fn call_id_for2(&mut self, call: &syn::ExprCall) -> NodeId {
+		let start = call.span().start();
+		let key = (start.line, start.column);
+		if let Some(&id) = self.call_ids.get(&key) {
+			return id;
+		}
+		let id = self.next_node_id();
+		self.call_ids.insert(key, id);
+		id
+	}
+	fn call_id_for(&self, node: &syn::ExprCall) -> Option<NodeId> {
+		let key = (node.span().start().line, node.span().start().column);
+		self.call_ids.get(&key).copied()
+	}
 }
 impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 	fn visit_expr(&mut self, node: &'ast syn::Expr) {
@@ -1221,16 +1272,16 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		syn::visit::visit_expr(self, node);
 	}
 	fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
-		let function_name = match &*node.func {
-			syn::Expr::Path(path) => path.path.segments.last().map(|s| s.ident.to_string()),
-			_ => None,
-		};
+		let key = (node.span().start().line, node.span().start().column);
 
-		let function_id = function_name
-			.as_deref()
-			.and_then(|name| self.resolve_symbol(name));
+		let call_id = self.next_node_id();
 
-		println!("CALL {:?} => {:?}", function_name, function_id);
+		let start = node.span().start();
+		self.call_ids.insert((start.line, start.column), call_id);
+		self.last_call_id = Some(call_id);
+		println!("CALL => {:?}", call_id);
+
+		let mut subject_related = false;
 
 		for arg in &node.args {
 			let syn::Expr::Path(path) = arg else {
@@ -1242,29 +1293,22 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 			};
 
 			let name = segment.ident.to_string();
+
 			let Some(source_id) = self.resolve_symbol(&name) else {
 				continue;
 			};
 
-			println!(
-				"ARGUMENT {} => {} subject={:?}",
-				name, source_id, self.subject_symbol
-			);
-
-			let Some(function_id) = function_id else {
-				continue;
-			};
-
-			// Value flows from the argument into the called function.
 			self.graph.add_relation(
 				source_id,
-				function_id,
+				call_id,
 				RelationKind::Downstream,
 				InfluenceKind::Direct,
 				Some(OwnershipRelation::Argument),
 			);
 
 			if Some(source_id) == self.subject_symbol {
+				subject_related = true;
+
 				self.related_symbols.push(SymReference {
 					name,
 					span: arg.span().into(),
@@ -1275,8 +1319,13 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 			}
 		}
 
+		if subject_related {
+			self.related_spans.push(node.span());
+		}
+
 		syn::visit::visit_expr_call(self, node);
 	}
+
 	fn visit_type(&mut self, node: &'ast syn::Type) {
 		match node {
 			syn::Type::Path(type_path) => {
@@ -1310,63 +1359,30 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		let name = pat_ident.ident.to_string();
 		let id = self.define_symbol(name.clone());
 
-		println!("DEFINE {} => {}", name, id);
-
 		self.related_symbols.push(SymReference {
-			name: name.clone(),
+			name,
 			span: pat_ident.ident.span().into(),
 			role: SymRole::Declaration,
 			resolved_id: Some(id),
 			relation: OwnershipRelation::Declaration,
 		});
 
+		// Visit the initializer first. This creates the call node.
+		syn::visit::visit_local(self, node);
+
 		if let Some(init) = &node.init {
 			if let syn::Expr::Call(call) = &*init.expr {
-				let function_id = match &*call.func {
-					syn::Expr::Path(path) => path
-						.path
-						.segments
-						.last()
-						.and_then(|segment| self.resolve_symbol(&segment.ident.to_string())),
-					_ => None,
-				};
-
-				if let Some(function_id) = function_id {
-					println!(
-						"RETURN FLOW {:?}({:?}) -> {}({})",
-						call.func, function_id, name, id
-					);
+				if let Some(call_id) = self.call_id_for(call) {
 					self.graph.add_relation(
-						function_id,
+						call_id,
 						id,
 						RelationKind::Downstream,
 						InfluenceKind::Direct,
-						Some(OwnershipRelation::Argument),
+						Some(OwnershipRelation::Return),
 					);
-
-					// If the subject flows into this call, the result is
-					// also downstream of the subject.
-					if self
-						.graph
-						.edges_from(&self.subject_symbol.unwrap_or(NodeId::MAX))
-						.iter()
-						.any(|edge| edge.to == function_id)
-					{
-						self.related_symbols.push(SymReference {
-							name: name.clone(),
-							span: pat_ident.ident.span().into(),
-							role: SymRole::Reference,
-							resolved_id: Some(id),
-							relation: OwnershipRelation::Return,
-						});
-
-						self.related_spans.push(pat_ident.ident.span().into());
-					}
 				}
 			}
 		}
-
-		syn::visit::visit_local(self, node);
 	}
 	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
 		let name = node.sig.ident.to_string();
@@ -1375,7 +1391,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		// Function itself belongs to the enclosing scope.
 		let function_id = self.define_symbol(name.clone());
 
-		println!("DEFINE FUNCTION {} => {}", name, function_id);
+		println!("DEFINE FUNCTION {} => {:?}", name, function_id);
 
 		self.related_symbols.push(SymReference {
 			name: name.clone(),
@@ -1399,7 +1415,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 					let name = segment.ident.to_string();
 
 					if let Some(source_id) = self.resolve_symbol(&name) {
-						println!("RETURN {} => {}", name, source_id);
+						println!("RETURN {} => {:?}", name, source_id);
 
 						self.related_symbols.push(SymReference {
 							name,
@@ -1439,7 +1455,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 
 						if let Some(id) = self.resolve_symbol(&name) {
 							println!(
-								"MUTATION {} => {} subject={:?}",
+								"MUTATION {} => {:?} subject={:?}",
 								name, id, self.subject_symbol
 							);
 
@@ -1717,7 +1733,9 @@ pub struct AnalysisData {
 	pub classification: NodeClassification,
 	pub symbols: Vec<LineSymbol>,
 }
-pub type NodeId = usize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct NodeId(pub usize);
 #[derive(Clone, Debug)]
 pub struct Graph {
 	pub nodes: Vec<GraphNode>,
@@ -1755,7 +1773,11 @@ impl Graph {
 	}
 
 	pub fn edges_from(&self, node: &NodeId) -> Vec<&Edge> {
-		self.edges.iter().filter(|edge| &edge.from == node).collect()
+		self
+			.edges
+			.iter()
+			.filter(|edge| &edge.from == node)
+			.collect()
 	}
 
 	pub fn edges_to(&self, node: NodeId) -> Vec<&Edge> {
@@ -1768,6 +1790,11 @@ impl Graph {
 	{
 		self.nodes.iter().filter(|node| predicate(node)).collect()
 	}
+	// fn new_node(&mut self) -> NodeId {
+	// 	let id = NodeId(self.next_id);
+	// 	self.next_id += 1;
+	// 	id
+	// }
 
 	pub fn node(&self, id: NodeId) -> Option<&GraphNode> {
 		self.nodes.iter().find(|node| node.id == id)
@@ -1946,197 +1973,6 @@ impl Workspace {
 		// * **Pipeline B (Whole-File Render/Analysis):** Source string + AST $\rightarrow$ `collect_lines` $\rightarrow$ Line-by-line symbol mapping (Top-down AST walk mapping spans to line numbers).
 		// * **Pipeline C (The Link):** Compare Pipeline A's resolved subject against Pipeline B's line symbols to answer "does this line affect my click?"
 
-		// ---
-
-		// ### 2. Implementing `collect_lines`
-
-		// Since `syn` nodes carry span information (`syn::spanned::Spanned`), you can walk the AST, find declarations, expressions, and identifiers, figure out which line number they sit on, and populate your `LineAnalysis` structures.
-
-		fn collect_lines(source: &str, syntax_tree: &syn::File) -> Vec<LineAnalysis> {
-			let raw_lines: Vec<&str> = source.lines().collect();
-			let lines_count = raw_lines.len();
-
-			// Maps line numbers to their respective symbol references
-			let mut line_map: HashMap<usize, Vec<SymReference>> = HashMap::new();
-
-			// The symbol registry / scope table tracking known definitions top-down
-			let mut symbol_registry: HashMap<String, SymInfo> = HashMap::new();
-			let mut next_id = 0;
-
-			// Walk the AST items
-			for item in &syntax_tree.items {
-				collect_item(item, &mut line_map, &mut symbol_registry, &mut next_id);
-			}
-
-			// Build the final vector mapping line-by-line
-			(1..=lines_count)
-				.map(|line_num| {
-					let text = raw_lines.get(line_num - 1).unwrap_or(&"").to_string();
-					let symbols = line_map.remove(&line_num).unwrap_or_default();
-
-					LineAnalysis {
-						line: line_num,
-						text,
-						relations: vec![],
-						flags: LineFlags::default(), // Adjust based on your struct definition
-						symbols,
-					}
-				})
-				.collect()
-		}
-
-		fn collect_item(
-			item: &syn::Item,
-			line_map: &mut HashMap<usize, Vec<SymReference>>,
-			registry: &mut HashMap<String, SymInfo>,
-			next_id: &mut usize,
-		) {
-			if let syn::Item::Fn(item_fn) = item {
-				// Register function definition if needed
-				for stmt in &item_fn.block.stmts {
-					collect_stmt(stmt, line_map, registry, next_id);
-				}
-			}
-		}
-
-		fn collect_stmt(
-			stmt: &syn::Stmt,
-			line_map: &mut HashMap<usize, Vec<SymReference>>,
-			registry: &mut HashMap<String, SymInfo>,
-			next_id: &mut usize,
-		) {
-			match stmt {
-				syn::Stmt::Local(local) => {
-					let line = local.span().start().line;
-
-					// 1. Handle the binding (Declaration site)
-					if let syn::Pat::Ident(pat_ident) = &local.pat {
-						let name = pat_ident.ident.to_string();
-
-						let sym_info = SymInfo {
-							id: *next_id,
-							name: name.clone(),
-							defined_at: local.span(),
-						};
-
-						registry.insert(name.clone(), sym_info);
-						*next_id += 1;
-
-						let info = registry.get(&name).unwrap();
-
-						line_map.entry(line).or_default().push(SymReference {
-							name,
-							role: SymRole::Declaration,
-							span: local.span(),
-							resolved_id: Some(info.id),
-							relation: OwnershipRelation::Declaration,
-						});
-					}
-
-					// 2. Handle the right-hand side initializer.
-					if let Some(init) = &local.init {
-						collect_expr(&init.expr, line_map, registry);
-					}
-				}
-
-				syn::Stmt::Expr(expr, _) => {
-					collect_expr(expr, line_map, registry);
-				}
-
-				_ => {}
-			}
-		}
-
-		fn collect_expr(
-			expr: &syn::Expr,
-			line_map: &mut HashMap<usize, Vec<SymReference>>,
-			registry: &HashMap<String, SymInfo>,
-		) {
-			match expr {
-				syn::Expr::Path(expr_path) => {
-					if let Some(ident) = expr_path.path.get_ident() {
-						let name = ident.to_string();
-						let line = expr_path.span().start().line;
-						let resolved_id = registry.get(&name).map(|info| info.id);
-
-						line_map.entry(line).or_default().push(SymReference {
-							name,
-							role: SymRole::Reference,
-							span: expr_path.span(),
-							resolved_id,
-							relation: OwnershipRelation::Reference,
-						});
-					}
-				}
-
-				syn::Expr::Binary(binary) => {
-					collect_expr(&binary.left, line_map, registry);
-					collect_expr(&binary.right, line_map, registry);
-				}
-
-				_ => {}
-			}
-		}
-
-		// Example recursive extractor for syn items/statements
-		// fn extract_symbols_from_item(item: &syn::Item, line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>) {
-		//     match item {
-		//         syn::Item::Fn(item_fn) => {
-		//             let line = item_fn.span().start().line;
-		//             // Record function scope / definition symbol
-		//             line_map.entry(line).or_default().push(SymInfo {
-		//                 // id: ,
-		//                 defined_at: Span,
-		//                 name: item_fn.sig.ident.to_string(),
-		//                 role: SymRole::Function,
-		//             });
-
-		//             // Walk statements inside the function body
-		//             for stmt in &item_fn.block.stmts {
-		//                 extract_symbols_from_stmt(stmt, line_map);
-		//             }
-		//         }
-		//         _ => {}
-		//     }
-		// }
-
-		// fn extract_symbols_from_stmt(stmt: &syn::Stmt, line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>) {
-		//     match stmt {
-		//         syn::Stmt::Local(local) => {
-		//             let line = local.span().start().line;
-		//             // Extract the variable name being bound (e.g., `spam` in `let spam = bar;`)
-		//             if let syn::Pat::Ident(pat_ident) = &local.pat {
-		//                 line_map.entry(line).or_default().push(SymInfo {
-		//                     name: pat_ident.ident.to_string(),
-		//                     role: SymRole::Declaration,
-		//                 });
-		//             }
-		//             // You can also inspect local.init for references (like `bar`)
-		//         }
-		//         syn::Stmt::Expr(expr, _) => {
-		//             extract_symbols_from_expr(expr, line_map);
-		//         }
-		//         _ => {}
-		//     }
-		// }
-
-		fn extract_symbols_from_expr(
-			_expr: &syn::Expr,
-			_line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>,
-		) {
-			// Recursively pull identifiers/references from expressions
-		}
-
-		// Phase 1: Query Extraction
-		// VSCode
-		// - Fold range from selection from VSCODE ( fold everything selectede. better than)
-
-		// struct ClickAnalysis {
-		//     file_path: PathBuf,
-		//     source: String,
-		//     tree: SyntaxTree,
-		//     position: Position,
-		// }
 		// 1. Click
 		//    - file
 		//    - line
@@ -2191,54 +2027,6 @@ impl Workspace {
 		//       - show actions
 		//    Webview:
 		//       - show graph
-		// pub fn analyze_ownership_on_click(
-		//     file_path: &PathBuf,
-		//     options: &AnalyzerOptions,
-		// ) -> Result<OwnershipAnalysisResult, AnalysisError> {
-		//     let source = load_source(file_path)?;
-		// 1. Identify Subject
-		//     let click = ClickContext::new(
-		//         file_path,
-		//         &source,
-		//         options,
-		//     );
-		// 2.
-		//     let ast = parse_source(&source)?;
-		//     let subject = resolve_subject(
-		//         &ast,
-		//         &source,
-		//         &click,
-		//     )?;
-		//     let scope = find_scope(
-		//         &ast,
-		//         &click,
-		//     );
-		//     let mut lines = collect_lines(
-		//         &source,
-		//         &scope,
-		//     );
-		//     let symbols = collect_symbols(
-		//         &ast,
-		//         &lines,
-		//     );
-		//     let relations = analyze_relationships(
-		//         &subject,
-		//         &symbols,
-		//     );
-		//     classify_lines(
-		//         &mut lines,
-		//         &subject,
-		//         &relations,
-		//     );
-		//     Ok(build_analysis_result(
-		//         click,
-		//         subject,
-		//         scope,
-		//         lines,
-		//         symbols,
-		//         relations,
-		//     ))
-		// }
 		// Click
 		//  |
 		// Resolve AST node
