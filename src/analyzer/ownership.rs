@@ -264,16 +264,13 @@ impl Workspace {
 	}
 
 	fn build_graph(
-		tree: &File,
-		file_path: &PathBuf,
+		tree: &syn::File,
 		options: &AnalyzerOptions,
-		subject: &Option<ResolvedNode>,
-	) -> Result<Graph, AnalysisError> {
-		let subject = subject
-			.as_ref()
-			.ok_or_else(|| AnalysisError::Parse("No subject node found at position".into()))?;
+		subject: &ResolvedNode,
+	) -> OwnershipGraph {
 		let mut graph = Graph::new();
-		let discovered = {
+
+		let (symbols, subject_id) = {
 			let mut visitor = OwnershipVisitor::new(
 				subject.clone(),
 				subject.name.clone(),
@@ -283,55 +280,50 @@ impl Workspace {
 
 			visitor.visit_file(tree);
 
-			visitor.related_symbols.clone()
+			(visitor.related_symbols.clone(), visitor.subject_symbol)
 		};
-		println!("===== GRAPH EDGES AFTER VISITOR =====");
-		for edge in &graph.edges {
-			println!(
-				"{:?} -> {:?} ({:?}, {:?})",
-				edge.from, edge.to, edge.relation, edge.influence,
-			);
+
+		OwnershipGraph {
+			graph,
+			symbols,
+			subject_id,
 		}
-		println!("===== DISCOVERED =====");
-		for symbol in &discovered {
-			println!(
-				"{} id={:?} relation={:?}",
-				symbol.name, symbol.resolved_id, symbol.relation,
-			);
-		}
-		let downstream_ids = Self::build_downstream(&graph, subject);
-		println!("SUBJECT: {:?}", subject.id);
-		println!("DOWNSTREAM IDS: {:?}", downstream_ids);
-		Ok(graph)
 	}
 	pub fn analyze_ownership_on_click(
 		file_path: &PathBuf,
 		options: &AnalyzerOptions,
 	) -> Result<AnalysisReport, AnalysisError> {
+		let (source, syntax_tree) = Self::parse_file(file_path)?;
+		Self::analyze_ownership(file_path, &source, &syntax_tree, options)
+	}
+	fn analyze_ownership(
+		file_path: &PathBuf,
+		source: &str,
+		syntax_tree: &syn::File,
+		options: &AnalyzerOptions,
+	) -> Result<AnalysisReport, AnalysisError> {
+		let click = ClickContext::new(file_path, source, options);
+
 		let mut cfg = AnalyzeConfig::new(Some(file_path), options);
 		let log = Log::new(options, &mut cfg);
 		log.cfg.set_level("1");
 
 		// ─────────────────────────────────────
-		// 1. Parse this file
+		// 1. Resolve the click
 		// ─────────────────────────────────────
-		let (source, syntax_tree) = Self::parse_file(file_path)?;
+		let context = Self::resolve_node_context(syntax_tree, click.line, click.column);
 
-		// ─────────────────────────────────────
-		// 2. Resolve the click
-		// ─────────────────────────────────────
-		let click = ClickContext::new(file_path, &source, options);
-		let context = Self::resolve_node_context(&syntax_tree, click.line, click.column);
 		let subject = context
 			.subject
-			.clone()
+			.as_ref()
 			.ok_or_else(|| AnalysisError::Parse("No subject node found".into()))?;
+
 		// ─────────────────────────────────────
-		// 3. Classify the clicked node
+		// 2. Classify the clicked node
 		// ─────────────────────────────────────
 		let classification = Self::classify_node(&context);
 
-		log.print("Subject", Vals::new().subject(&subject));
+		log.print("Subject", Vals::new().subject(subject));
 
 		log.print(
 			"Classification",
@@ -343,27 +335,12 @@ impl Workspace {
 		}
 
 		// ─────────────────────────────────────
-		// 4. Build semantic graph for this file
+		// 3. Build semantic graph
 		// ─────────────────────────────────────
-		let mut graph = Graph::new();
+		let ownership = Self::build_graph(syntax_tree, options, subject);
 
-		let mut visitor = OwnershipVisitor::new(
-			subject.clone(),
-			subject.name.clone(),
-			options.clone(),
-			&mut graph,
-		);
+		let lines = Self::stage_build_related_lines_from_subject(&ownership, file_path, subject);
 
-		visitor.visit_file(&syntax_tree);
-
-		// ─────────────────────────────────────
-		// 5. Project graph → source lines
-		// ─────────────────────────────────────
-		let lines = Self::stage_build_line_analysis(&visitor, file_path, &source);
-
-		// ─────────────────────────────────────
-		// 6. Build report
-		// ─────────────────────────────────────
 		Self::stage_report(context, click, lines, classification)
 	}
 	pub fn stage_build_line_analysis(
@@ -418,24 +395,20 @@ impl Workspace {
 		lines
 	}
 	pub fn stage_build_related_lines_from_subject(
-		visitor: &OwnershipVisitor,
+		ownership: &OwnershipGraph,
 		file_path: &PathBuf,
+		subject: &ResolvedNode,
 	) -> Vec<LineRelated> {
 		let mut related_lines = Vec::new();
-
-		let downstream = Self::build_downstream(visitor.graph, &visitor.subject);
-
-		for symbol in &visitor.related_symbols {
-			let is_subject = symbol.resolved_id == visitor.subject_symbol;
-
-			let is_downstream = symbol
-				.resolved_id
-				.is_some_and(|id| downstream.contains(&id));
-
+		let subject_id = ownership.subject_id;
+		let downstream = Self::build_downstream(&ownership.graph, subject);
+		for symbol in &ownership.symbols {
+			let id = symbol.resolved_id;
+			let is_subject = id == subject_id;
+			let is_downstream = id.is_some_and(|id| downstream.contains(&id));
 			if !is_subject && !is_downstream {
 				continue;
 			}
-
 			Self::add_relation(
 				&mut related_lines,
 				symbol.span.start().line,
@@ -2406,20 +2379,19 @@ mod tests {
 			Occurrence::First => position_of(source, name),
 			Occurrence::Last => position_of_last(source, name),
 		};
+
 		let syntax_tree = syn::parse_file(source).unwrap();
+
 		let options = AnalyzerOptions {
 			line: Some(line as u32),
 			column: Some(column as u32),
 			..AnalyzerOptions::default()
 		};
-		let context = Workspace::resolve_node_context(&syntax_tree, line, column);
-		println!("CLICK {}:{} on {}", line, column, name);
-		let subject = context.subject.expect("expected subject");
-		let mut graph = Graph::new();
-		let mut visitor =
-			OwnershipVisitor::new(subject.clone(), subject.name.clone(), options, &mut graph);
-		visitor.visit_file(&syntax_tree);
-		Workspace::stage_build_related_lines_from_subject(&visitor, &PathBuf::from("test.rs"))
+
+		Workspace::analyze_ownership(&PathBuf::from("test.rs"), source, &syntax_tree, &options)
+			.expect("ownership analysis failed")
+			.analysis
+			.related_lines
 	}
 	fn assert_line(related: &[LineRelated], line: usize, relation: OwnershipRelation) {
 		let entry = related
@@ -2923,4 +2895,10 @@ mod tests {
 			],
 		);
 	}
+}
+
+pub struct OwnershipGraph {
+	pub graph: Graph,
+	pub symbols: Vec<SymReference>,
+	pub subject_id: Option<usize>,
 }
