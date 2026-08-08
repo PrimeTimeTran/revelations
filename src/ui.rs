@@ -245,7 +245,6 @@ fn render_trait(t: &ItemTrait, config: &Config, indent: String) -> String {
 	output.push_str("\n{}");
 	output
 }
-
 pub fn render_indent(level: usize) -> String {
 	INDENT_STEP.repeat(level)
 }

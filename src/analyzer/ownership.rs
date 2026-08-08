@@ -1,392 +1,4 @@
-use crate::{
-	_config::{AnalyzeConfig, Logger as Log, Vals},
-	_scope::Scope,
-	analyzer::*,
-	ir::*,
-};
-use proc_macro2::Span;
-use quote::ToTokens;
-use regex_syntax::ast::Ast;
-use serde::{Deserialize, Serialize};
-use std::{
-	collections::HashMap,
-	fs::read_to_string,
-	io::{self},
-	path::{Path, PathBuf},
-};
-use std::{fmt::Write, io::Write as _};
-use swc_core::common::LineCol;
-use syn::{
-	File, Ident,
-	spanned::Spanned,
-	visit::{self, Visit, visit_local},
-	visit_mut::{self, VisitMut},
-};
-
 impl Workspace {
-	fn roadmap() {
-		// To nail the compiler boundaries for an interactive click-to-analyze tool (like a language server feature), you want to separate **Phase 1: Query Extraction** (point-in-time lookup) from **Phase 2: Whole-File Semantic Mapping** (line-by-line analysis).
-
-		// Since you are working with `syn::File` (standard Rust AST structures), you can implement `collect_lines` by using a **visitor pattern** or a recursive span-matching pass that scans the syntax tree once and projects the AST nodes onto their respective source lines.
-
-		// Here is how you can structure the boundary and implement `collect_lines`:
-
-		// ### 1. The Compiler Pipeline Boundary
-
-		// * **Pipeline A (Targeted Query):** Click coordinates $\rightarrow$ `resolve_node` $\rightarrow$ Find the exact AST node and its path/ancestors. (Fast, localized, bottom-up).
-		// * **Pipeline B (Whole-File Render/Analysis):** Source string + AST $\rightarrow$ `collect_lines` $\rightarrow$ Line-by-line symbol mapping (Top-down AST walk mapping spans to line numbers).
-		// * **Pipeline C (The Link):** Compare Pipeline A's resolved subject against Pipeline B's line symbols to answer "does this line affect my click?"
-
-		// ---
-
-		// ### 2. Implementing `collect_lines`
-
-		// Since `syn` nodes carry span information (`syn::spanned::Spanned`), you can walk the AST, find declarations, expressions, and identifiers, figure out which line number they sit on, and populate your `LineAnalysis` structures.
-
-		fn collect_lines(source: &str, syntax_tree: &syn::File) -> Vec<LineAnalysis> {
-			let raw_lines: Vec<&str> = source.lines().collect();
-			let lines_count = raw_lines.len();
-
-			// Maps line numbers to their respective symbol references
-			let mut line_map: HashMap<usize, Vec<SymReference>> = HashMap::new();
-
-			// The symbol registry / scope table tracking known definitions top-down
-			let mut symbol_registry: HashMap<String, SymInfo> = HashMap::new();
-			let mut next_id = 0;
-
-			// Walk the AST items
-			for item in &syntax_tree.items {
-				collect_item(item, &mut line_map, &mut symbol_registry, &mut next_id);
-			}
-
-			// Build the final vector mapping line-by-line
-			(1..=lines_count)
-				.map(|line_num| {
-					let text = raw_lines.get(line_num - 1).unwrap_or(&"").to_string();
-					let symbols = line_map.remove(&line_num).unwrap_or_default();
-
-					LineAnalysis {
-						line: line_num,
-						text,
-						flags: LineFlags::default(), // Adjust based on your struct definition
-						symbols,
-					}
-				})
-				.collect()
-		}
-
-		fn collect_item(
-			item: &syn::Item,
-			line_map: &mut HashMap<usize, Vec<SymReference>>,
-			registry: &mut HashMap<String, SymInfo>,
-			next_id: &mut usize,
-		) {
-			if let syn::Item::Fn(item_fn) = item {
-				// Register function definition if needed
-				for stmt in &item_fn.block.stmts {
-					collect_stmt(stmt, line_map, registry, next_id);
-				}
-			}
-		}
-
-		fn collect_stmt(
-			stmt: &syn::Stmt,
-			line_map: &mut HashMap<usize, Vec<SymReference>>,
-			registry: &mut HashMap<String, SymInfo>,
-			next_id: &mut usize,
-		) {
-			match stmt {
-				syn::Stmt::Local(local) => {
-					let line = local.span().start().line;
-
-					// 1. Handle the binding (Declaration site)
-					if let syn::Pat::Ident(pat_ident) = &local.pat {
-						let name = pat_ident.ident.to_string();
-						let sym_info = SymInfo {
-							id: *next_id,
-							name: name.clone(),
-							defined_at: local.span(),
-						};
-						registry.insert(name.clone(), sym_info);
-						*next_id += 1;
-
-						let info = registry.get(&name).unwrap();
-
-						// Record declaration reference pointing back to its info
-						line_map.entry(line).or_default().push(SymReference {
-							name,
-							role: SymRole::Declaration, // Ensure role is explicitly set here
-							span: local.span(),
-							resolved_id: Some(info.id),
-						});
-					}
-
-					// 2. Handle the right-hand side initializer (Modern syn::LocalInit access)
-					if let Some(init) = &local.init {
-						collect_expr(&init.expr, line_map, registry);
-					}
-				}
-				syn::Stmt::Expr(expr, _) => {
-					collect_expr(expr, line_map, registry);
-				}
-				_ => {}
-			}
-		}
-
-		fn collect_expr(
-			expr: &syn::Expr,
-			line_map: &mut HashMap<usize, Vec<SymReference>>,
-			registry: &HashMap<String, SymInfo>,
-		) {
-			match expr {
-				syn::Expr::Path(expr_path) => {
-					if let Some(ident) = expr_path.path.get_ident() {
-						let name = ident.to_string();
-						let line = expr_path.span().start().line;
-
-						// Look up if this reference points to a known symbol
-						let resolved_id = registry.get(&name).map(|info| info.id);
-
-						line_map.entry(line).or_default().push(SymReference {
-							name,
-							role: SymRole::Reference, // Could be mutation depending on context
-							span: expr_path.span(),
-							resolved_id,
-						});
-					}
-				}
-				syn::Expr::Binary(binary) => {
-					collect_expr(&binary.left, line_map, registry);
-					collect_expr(&binary.right, line_map, registry);
-				}
-				_ => {}
-			}
-		}
-
-		// Example recursive extractor for syn items/statements
-		// fn extract_symbols_from_item(item: &syn::Item, line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>) {
-		//     match item {
-		//         syn::Item::Fn(item_fn) => {
-		//             let line = item_fn.span().start().line;
-		//             // Record function scope / definition symbol
-		//             line_map.entry(line).or_default().push(SymInfo {
-		//                 // id: ,
-		//                 defined_at: Span,
-		//                 name: item_fn.sig.ident.to_string(),
-		//                 role: SymRole::Function,
-		//             });
-
-		//             // Walk statements inside the function body
-		//             for stmt in &item_fn.block.stmts {
-		//                 extract_symbols_from_stmt(stmt, line_map);
-		//             }
-		//         }
-		//         _ => {}
-		//     }
-		// }
-
-		// fn extract_symbols_from_stmt(stmt: &syn::Stmt, line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>) {
-		//     match stmt {
-		//         syn::Stmt::Local(local) => {
-		//             let line = local.span().start().line;
-		//             // Extract the variable name being bound (e.g., `spam` in `let spam = bar;`)
-		//             if let syn::Pat::Ident(pat_ident) = &local.pat {
-		//                 line_map.entry(line).or_default().push(SymInfo {
-		//                     name: pat_ident.ident.to_string(),
-		//                     role: SymRole::Declaration,
-		//                 });
-		//             }
-		//             // You can also inspect local.init for references (like `bar`)
-		//         }
-		//         syn::Stmt::Expr(expr, _) => {
-		//             extract_symbols_from_expr(expr, line_map);
-		//         }
-		//         _ => {}
-		//     }
-		// }
-
-		fn extract_symbols_from_expr(
-			_expr: &syn::Expr,
-			_line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>,
-		) {
-			// Recursively pull identifiers/references from expressions
-		}
-
-		// Phase 1: Query Extraction
-		// VSCode
-		// - Fold range from selection from VSCODE ( fold everything selectede. better than)
-
-		// struct ClickAnalysis {
-		//     file_path: PathBuf,
-		//     source: String,
-		//     tree: SyntaxTree,
-		//     position: Position,
-		// }
-		// 1. Click
-		//    - file
-		//    - line
-		//    - column
-		//    - cursor position
-		// 2. Find relevant lines
-		//    LineRelated[]
-		//    Example:
-		//    line 2 -> Scope
-		//    line 3 -> Scope
-		//    line 9 -> Scope
-		// 3. Populate symbols inside those lines
-		//    Line 3:
-		//       symbol: bar
-		//       role: Declaration
-		//    Line 9:
-		//       symbol: bar
-		//       role: Reference
-		// 4. Compare symbols against clicked subject
-		//    Subject:
-		//       bar
-		//    Line 3:
-		//       bar declaration
-		//       affects subject: true
-		//    Line 2:
-		//       foo declaration
-		//       affects subject: false
-		//
-		// 5. Add flags
-		//    LineAnalysis {
-		//        line: 3,
-		//        symbols: [
-		//            {
-		//              name: "bar",
-		//              role: "declaration",
-		//              relation_to_subject: "defines"
-		//            }
-		//        ],
-		//        flags: {
-		//            in_scope: true,
-		//            influences_subject: true,
-		//            unrelated: false
-		//        }
-		//    }
-		// 6. Render different views
-		//    Decorations:
-		//       - highlight influence lines
-		//       - grey unrelated lines
-		//    Inlay hints:
-		//       - show symbol roles
-		//    CodeLens:
-		//       - show actions
-		//    Webview:
-		//       - show graph
-		// pub fn analyze_ownership_on_click(
-		//     file_path: &PathBuf,
-		//     options: &AnalyzerOptions,
-		// ) -> Result<OwnershipAnalysisResult, AnalysisError> {
-		//     let source = load_source(file_path)?;
-		// 1. Identify Subject
-		//     let click = ClickContext::new(
-		//         file_path,
-		//         &source,
-		//         options,
-		//     );
-		// 2.
-		//     let ast = parse_source(&source)?;
-		//     let subject = resolve_subject(
-		//         &ast,
-		//         &source,
-		//         &click,
-		//     )?;
-		//     let scope = find_scope(
-		//         &ast,
-		//         &click,
-		//     );
-		//     let mut lines = collect_lines(
-		//         &source,
-		//         &scope,
-		//     );
-		//     let symbols = collect_symbols(
-		//         &ast,
-		//         &lines,
-		//     );
-		//     let relations = analyze_relationships(
-		//         &subject,
-		//         &symbols,
-		//     );
-		//     classify_lines(
-		//         &mut lines,
-		//         &subject,
-		//         &relations,
-		//     );
-		//     Ok(build_analysis_result(
-		//         click,
-		//         subject,
-		//         scope,
-		//         lines,
-		//         symbols,
-		//         relations,
-		//     ))
-		// }
-		// Click
-		//  |
-		// Resolve AST node
-		//  |
-		// Collect ancestors
-		//  |
-		// Classify node
-		//  |
-		// Build influence edges
-		//  |
-		// Traverse outward
-		//  |
-		// Highlight affected lines
-	}
-	fn print_click_analysis(
-		context: &ClickContext,
-		symbols: &[LineSymbol],
-		node_context: Option<&NodeContext>,
-	) {
-		println!("================ CLICK ANALYSIS ================");
-		println!("FILE   : {}", context.file.display());
-		println!("LINE   : {}", context.line);
-		println!("COLUMN : {}", context.column);
-		println!();
-		println!("SOURCE:");
-		for (idx, source_line) in context.source.lines().enumerate() {
-			let line_number = idx + 1;
-			let labels: Vec<_> = symbols
-				.iter()
-				.filter(|s| s.line == line_number)
-				.map(|s| format!("{}:{:?}", s.name, s.role))
-				.collect();
-			match labels.is_empty() {
-				true => {
-					println!("{:>4} | {}", line_number, source_line);
-				}
-				false => {
-					println!(
-						"{:>4} | {:<50} // {}",
-						line_number,
-						source_line,
-						labels.join(", ")
-					);
-				}
-			}
-			if line_number == context.line {
-				println!(
-					"{:>width$}^ column {}",
-					"",
-					context.column,
-					width = context.column as usize + 8
-				);
-			}
-		}
-		// if let Some(node_context) = &report.node_context {
-		//     println!();
-		//     print_node_context(
-		//         node_context,
-		//         LineKind::Cursor,
-		//     );
-		// }
-		println!("===============================================");
-	}
 	fn find_parent_node(nodes: &[AstNode], line: usize) -> Option<NodeContext> {
 		todo!("")
 	}
@@ -414,11 +26,9 @@ impl Workspace {
 		let line = options
 			.line
 			.ok_or_else(|| AnalysisError::Parse("missing line".into()))?;
-
 		let column = options
 			.column
 			.ok_or_else(|| AnalysisError::Parse("missing column".into()))?;
-
 		Ok(Self::resolve_node_context(
 			syntax_tree,
 			line as usize,
@@ -478,22 +88,26 @@ impl Workspace {
 			_ => NodeClassification::Unknown,
 		}
 	}
-	// fn resolve_subject(
-	//     options: &AnalyzerOptions,
-	//     syntax_tree: &File,
-	// ) -> Result<NodeContext, AnalysisError> {
-	//     let mut resolver = NodeResolver {
-	//         line: options.line.unwrap(),
-	//         column: options.column.unwrap(),
-	//         candidates: Vec::new(),
-	//         nodes: Vec::new(),
-	//         ancestors: Vec::new(),
-	//         best: None,
-	//     };
-	//     resolver.visit_file(&syntax_tree);
-	//     let node = resolver.resolve();
-	//     Ok(node)
-	// }
+	fn resolve_subject(
+	    options: &AnalyzerOptions,
+	    syntax_tree: &File,
+					line: usize,
+					column: usize,
+	) -> Result<NodeContext, AnalysisError> {
+  	let mut resolver = NodeResolver {
+  		line,
+  		column,
+  		current_name: None,
+  		position: pos(line, column),
+  		candidates: Vec::new(),
+  		best: None,
+  		nodes: Vec::new(),
+  		ancestors: Vec::new(),
+  	};
+    resolver.visit_file(&syntax_tree);
+    let node = resolver.resolve();
+    Ok(node)
+	}
 	fn resolve_click(ast: &syn::File, context: &ClickContext) -> Option<NodeContext> {
 		let nodes = Self::collect_nodes(ast);
 		if let Some(node) = Self::find_node_at(&nodes, context.line, context.column) {
@@ -525,6 +139,40 @@ impl Workspace {
 			std::fs::read_to_string(file_path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
 		let syntax_tree = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
 		Ok((source, syntax_tree))
+	}
+	fn add_relation(
+		related_lines: &mut Vec<LineRelated>,
+		line: usize,
+		file_path: &PathBuf,
+		relation: OwnershipRelation,
+	) {
+		if let Some(existing) = related_lines.iter_mut().find(|x| x.line == line) {
+			if !existing.relations.contains(&relation) {
+				existing.relations.push(relation);
+			}
+			return;
+		}
+		related_lines.push(LineRelated {
+			line,
+			file_path: file_path.clone(),
+			relations: vec![relation],
+		});
+	}
+	fn find_scope_at_position(
+		syntax_tree: &syn::File,
+		options: &AnalyzerOptions,
+	) -> Option<proc_macro2::Span> {
+		let mut visitor = ScopeVisitor {
+			target_line: options.line.unwrap_or(0),
+			target_column: options.column.unwrap_or(0),
+			scopes: Vec::new(),
+		};
+		visitor.visit_file(syntax_tree);
+		// Return the smallest scope containing the cursor
+		visitor.scopes.into_iter().min_by_key(|span| {
+			let size = span.end().line - span.start().line;
+			size
+		})
 	}
 
 	pub fn analyze_ownership_on_click(
@@ -574,7 +222,6 @@ impl Workspace {
 			.subject
 			.clone()
 			.ok_or_else(|| AnalysisError::Parse("No subject node found at position".into()))?;
-
 		// let node = graph.find(subject);
 		// let affected = graph.walk(node);
 		// let subject_name = subject.name.clone();
@@ -593,23 +240,20 @@ impl Workspace {
 		let scope = Self::find_scope_at_position(&syntax_tree, options);
 		let related_lines =
 			Self::stage_build_related_lines_from_subject(&subject, &ownership_visitor, file_path);
-		eprintln!("context {:?}", context);
-		eprintln!("related_lines {:?}", related_lines);
-		eprintln!("classification {:?}", classification);
-
+		// eprintln!("context {:?}", context);
+		
+		// eprintln!("related_lines {:?}", related_lines);
+		// eprintln!("classification {:?}", classification);
 		Self::stage_report(context, click, related_lines, classification)
 	}
-
 	pub fn stage_build_related_lines_from_subject(
 		subject: &ResolvedNode,
 		visitor: &OwnershipVisitor,
 		file_path: &PathBuf,
 	) -> Vec<LineRelated> {
 		let mut related_lines = Vec::new();
-
 		for span in &visitor.related_spans {
 			println!("REFERENCE SPAN {:?} -> line {}", span, span.start().line);
-
 			Self::add_relation(
 				&mut related_lines,
 				span.start().line,
@@ -617,7 +261,6 @@ impl Workspace {
 				OwnershipRelation::Reference,
 			);
 		}
-
 		for symbol in &visitor.related_symbols {
 			if symbol.resolved_id == visitor.subject_symbol {
 				let relation = match symbol.role {
@@ -625,7 +268,6 @@ impl Workspace {
 					SymRole::Reference => Some(OwnershipRelation::Reference),
 					_ => None,
 				};
-
 				if let Some(relation) = relation {
 					Self::add_relation(
 						&mut related_lines,
@@ -636,11 +278,9 @@ impl Workspace {
 				}
 			}
 		}
-
 		related_lines
 	}
-
-	fn stage_report(
+	pub fn stage_report(
 		ctx: NodeContext,
 		click: ClickContext,
 		related_lines: Vec<LineRelated>,
@@ -654,7 +294,6 @@ impl Workspace {
 			symbols: Vec::new(),
 		};
 		let formatted_output = build_final_analysis(&click, Some(&related_lines));
-
 		// let mut stdout = io::stdout();
 		// stdout
 		//     .write_all(json_output.as_bytes())
@@ -674,23 +313,6 @@ impl Workspace {
 		// println!("{}", report.formatted_output);
 		Ok(report)
 	}
-
-	fn find_scope_at_position(
-		syntax_tree: &syn::File,
-		options: &AnalyzerOptions,
-	) -> Option<proc_macro2::Span> {
-		let mut visitor = ScopeVisitor {
-			target_line: options.line.unwrap_or(0),
-			target_column: options.column.unwrap_or(0),
-			scopes: Vec::new(),
-		};
-		visitor.visit_file(syntax_tree);
-		// Return the smallest scope containing the cursor
-		visitor.scopes.into_iter().min_by_key(|span| {
-			let size = span.end().line - span.start().line;
-			size
-		})
-	}
 	fn collect_lines(source: &str, scope: &ScopeInfo) -> Vec<LineAnalysis> {
 		todo!("collect_lines")
 	}
@@ -706,16 +328,6 @@ impl Workspace {
 		relations: &[SymRelation],
 	) {
 		todo!("classify_lines")
-	}
-	fn build_analysis_result(
-		click: ClickContext,
-		subject: Option<ResolvedSubject>,
-		scope: Option<ScopeInfo>,
-		lines: Vec<LineAnalysis>,
-		symbols: Vec<SymReference>,
-		relations: Vec<SymRelation>,
-	) -> OwnershipAnalysisResult {
-		todo!("build_analysis_result")
 	}
 	fn run_checks(&self, ast: &syn::File) {
 		todo!("run_checks")
@@ -740,45 +352,8 @@ impl Workspace {
 		// later:
 		// send_to_client(report);
 	}
-	fn add_relation(
-		related_lines: &mut Vec<LineRelated>,
-		line: usize,
-		file_path: &PathBuf,
-		relation: OwnershipRelation,
-	) {
-		if let Some(existing) = related_lines.iter_mut().find(|x| x.line == line) {
-			if !existing.relations.contains(&relation) {
-				existing.relations.push(relation);
-			}
-			return;
-		}
-
-		related_lines.push(LineRelated {
-			line,
-			file_path: file_path.clone(),
-			relations: vec![relation],
-		});
-	}
-	fn print_click_report(report: &ClickReport) {
-		Self::print_click_analysis(
-			&report.context,
-			&report.symbols,
-			report.node_context.as_ref(),
-		);
-	}
 }
 
-fn extract_ident(pat: &syn::Pat) -> Option<&syn::Ident> {
-	match pat {
-		syn::Pat::Ident(pat_ident) => Some(&pat_ident.ident),
-		syn::Pat::Type(pat_type) => extract_ident(&pat_type.pat),
-		syn::Pat::Reference(pat_ref) => extract_ident(&pat_ref.pat),
-		syn::Pat::Paren(pat_paren) => extract_ident(&pat_paren.pat),
-		syn::Pat::TupleStruct(tuple_struct) => tuple_struct.elems.iter().find_map(extract_ident),
-		syn::Pat::Tuple(tuple) => tuple.elems.iter().find_map(extract_ident),
-		_ => None,
-	}
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymRelation {
 	/// Source symbol
@@ -837,16 +412,6 @@ struct SymbolVisitor {
 	pub relations: Vec<SymRelation>,
 	pub scopes: Vec<Span>,
 }
-impl<'ast> syn::visit::Visit<'ast> for ScopeVisitor {
-	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-		self.check_scope(node.span());
-		syn::visit::visit_item_fn(self, node);
-	}
-	fn visit_block(&mut self, node: &'ast syn::Block) {
-		self.check_scope(node.span());
-		syn::visit::visit_block(self, node);
-	}
-}
 impl ScopeVisitor {
 	fn check_scope(&mut self, span: proc_macro2::Span) {
 		let start = span.start();
@@ -857,6 +422,17 @@ impl ScopeVisitor {
 		}
 	}
 }
+impl<'ast> syn::visit::Visit<'ast> for ScopeVisitor {
+	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+		self.check_scope(node.span());
+		syn::visit::visit_item_fn(self, node);
+	}
+	fn visit_block(&mut self, node: &'ast syn::Block) {
+		self.check_scope(node.span());
+		syn::visit::visit_block(self, node);
+	}
+}
+
 pub struct ScopeLine {
 	pub line: usize,
 	pub span: Span,
@@ -1122,7 +698,6 @@ impl SerializableSpan {
 			column: self.start_col,
 		}
 	}
-
 	pub fn end(&self) -> DummyLineColumn {
 		DummyLineColumn {
 			line: self.end_line,
@@ -1134,13 +709,12 @@ pub struct DummyLineColumn {
 	pub line: usize,
 	pub column: usize,
 }
-
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeContext {
 	pub subject: Option<ResolvedNode>,
 	pub ancestors: Vec<ResolvedNode>,
 }
-pub struct NodeResolver {
+struct NodeResolver {
 	pub line: usize,
 	pub column: usize,
 	current_name: Option<String>,
@@ -1170,16 +744,7 @@ impl NodeResolver {
 			ancestors: self.candidates,
 		}
 	}
-	fn contains(&self, span: Span) -> bool {
-		let ((start_line, start_column), (end_line, end_column)) = line_col(span);
-		let after_start =
-			self.line > start_line || (self.line == start_line && self.column >= start_column);
-		let before_end = self.line < end_line || (self.line == end_line && self.column <= end_column);
-		after_start && before_end
-	}
-}
-impl NodeResolver {
-	pub fn resolve(mut self) -> NodeContext {
+	fn resolve(mut self) -> NodeContext {
 		self.candidates.sort_by_key(|node| {
 			let start = node.span.start();
 			let end = node.span.end();
@@ -1191,8 +756,13 @@ impl NodeResolver {
 			ancestors: self.candidates,
 		}
 	}
-}
-impl<'ast> NodeResolver {
+	fn contains(&self, span: Span) -> bool {
+		let ((start_line, start_column), (end_line, end_column)) = line_col(span);
+		let after_start =
+			self.line > start_line || (self.line == start_line && self.column >= start_column);
+		let before_end = self.line < end_line || (self.line == end_line && self.column <= end_column);
+		after_start && before_end
+	}
 	fn check(&mut self, kind: AstNodeKind, span: proc_macro2::Span) {
 		let contains = self.contains(span);
 		println!("CHECK {:?} contains={} span={:?}", kind, contains, span);
@@ -1241,7 +811,6 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 		);
 		syn::visit::visit_pat_ident(self, node);
 	}
-
 	fn visit_local(&mut self, node: &'ast syn::Local) {
 		let (name, mutable) = match &node.pat {
 			syn::Pat::Ident(pat) => (Some(pat.ident.to_string()), Some(pat.mutability.is_some())),
@@ -1251,6 +820,18 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 		self.check_with_metadata(AstNodeKind::Local, node.span(), name, mutable);
 
 		syn::visit::visit_local(self, node);
+	}
+	fn visit_block(&mut self, node: &'ast syn::Block) {
+		if self.contains(node.span()) {
+			self.nodes.push(AstNodeKind::Block);
+		}
+		syn::visit::visit_block(self, node);
+	}
+	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+		if self.contains(node.span()) {
+			self.nodes.push(AstNodeKind::Function);
+		}
+		syn::visit::visit_item_fn(self, node);
 	}
 	fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
 		let name = node
@@ -1263,19 +844,6 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 
 		syn::visit::visit_expr_path(self, node);
 	}
-	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-		if self.contains(node.span()) {
-			self.nodes.push(AstNodeKind::Function);
-		}
-		syn::visit::visit_item_fn(self, node);
-	}
-	fn visit_block(&mut self, node: &'ast syn::Block) {
-		if self.contains(node.span()) {
-			self.nodes.push(AstNodeKind::Block);
-		}
-		syn::visit::visit_block(self, node);
-	}
-
 	fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
 		if self.contains(node.span()) {
 			self.nodes.push(AstNodeKind::BinaryExpr);
@@ -1294,7 +862,6 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 		}
 		syn::visit::visit_expr_call(self, node);
 	}
-
 	fn visit_expr_lit(&mut self, node: &'ast syn::ExprLit) {
 		if self.contains(node.span()) {
 			self.nodes.push(AstNodeKind::Literal);
@@ -1302,7 +869,6 @@ impl<'ast> syn::visit::Visit<'ast> for NodeResolver {
 		syn::visit::visit_expr_lit(self, node);
 	}
 }
-impl NodeContext {}
 #[derive(Debug, Clone)]
 pub enum NodeGoal {
 	Expression,
@@ -1333,7 +899,6 @@ impl NodeContext {
 		NodeGoal::Unknown
 	}
 }
-
 pub struct OwnershipNode {
 	pub id: SymId,
 	pub name: String,
@@ -1360,12 +925,7 @@ pub enum OwnershipRelation {
 	MoveOwnership,
 	Assignment,
 }
-// pub struct ResolvedSymbol {
-//     pub name: String,
-//     pub declaration: Span,
-//     pub references: Vec<Span>,
-//     pub scope: Span,
-// }
+
 // - Subject: Identifier clicked on
 // - Candidates: - Potential subjects if one was not clicked on. For example they clicked 'end of line' or a key word like 'impl'.
 // - Ancestor: An identfiier which influences the ownership of this subject.
@@ -1521,7 +1081,6 @@ impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
 	//        mutable: Some(node.mutability.is_some()),
 	//        name: Some(node.ident.to_string()),
 	//    });
-
 	//    syn::visit::visit_pat_ident(self, node);
 	// }
 	fn visit_macro(&mut self, node: &'ast syn::Macro) {
@@ -1558,14 +1117,7 @@ impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
 		syn::visit::visit_expr_path(self, node);
 	}
 }
-pub struct OwnershipAnalysisResult {
-	pub click: ClickContext,
-	pub subject: Option<SymId>,
-	pub scope: Option<ScopeInfo>,
-	pub lines: Vec<LineAnalysis>,
-	pub symbols: Vec<SymReference>,
-	pub relations: Vec<SymRelation>,
-}
+
 pub struct ClickReport {
 	pub context: ClickContext,
 	pub symbols: Vec<LineSymbol>,
@@ -1612,15 +1164,31 @@ impl<'ast> Visit<'ast> for NodeCollector {
 	}
 }
 
-use syn::Token;
-use syn::token::Token;
-
-pub struct Expr;
-pub struct LocalInit {
-	pub eq_token: Token![=],
-	pub expr: Box<Expr>,
-	pub diverge: Option<(Token![else], Box<Expr>)>,
-}
+use crate::{
+	_config::{AnalyzeConfig, Logger as Log, Vals},
+	_scope::Scope,
+	analyzer::*,
+	ir::*,
+};
+use proc_macro2::Span;
+use quote::ToTokens;
+use regex_syntax::ast::Ast;
+use serde::{Deserialize, Serialize};
+use std::{
+	collections::HashMap,
+	fs::read_to_string,
+	io::{self},
+	path::{Path, PathBuf},
+};
+use std::{fmt::Write, io::Write as _};
+use swc_core::common::LineCol;
+use syn::{
+	Token, File, Ident,
+	token::Token,
+	spanned::Spanned,
+	visit::{self, Visit, visit_local},
+	visit_mut::{self, VisitMut},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SourcePosition {
@@ -1635,6 +1203,7 @@ impl From<proc_macro2::LineColumn> for SourcePosition {
 		}
 	}
 }
+
 #[inline]
 fn line_col(span: Span) -> ((usize, usize), (usize, usize)) {
 	let start = span.start();
@@ -1649,98 +1218,9 @@ fn pos(line: usize, column: usize) -> SourcePosition {
 		column: column as u32,
 	}
 }
-struct OwnershipAnalysis {
-	pub related_lines: Vec<LineRelated>,
-	pub click: ClickContext,
-	pub node_context: NodeContext,
-	pub classification: NodeClassification,
-	pub symbols: Vec<LineSymbol>,
-}
-
-#[derive(Serialize)]
-pub struct AnalysisReport {
-	pub click: ClickContext,
-	pub analysis: AnalysisData,
-	pub formatted_output: String,
-}
-#[derive(Serialize)]
-pub struct AnalysisData {
-	pub related_lines: Vec<LineRelated>,
-	pub node_context: NodeContext,
-	pub classification: NodeClassification,
-	pub symbols: Vec<LineSymbol>,
-}
-pub type NodeId = usize;
-pub struct InfluenceGraph {
-	pub nodes: HashMap<NodeId, GraphNode>,
-	pub edges: Vec<GraphEdge>,
-}
-pub struct GraphNode {
-	pub id: NodeId,
-	pub name: String,
-	pub kind: AstNodeKind,
-	pub span: proc_macro2::Span,
-}
-pub struct GraphEdge {
-	pub from: NodeId,
-	pub to: NodeId,
-	pub relation: RelationKind,
-	pub influence: InfluenceKind,
-}
-pub enum ScopeKind {}
-pub struct ScopeContext {
-	pub kind: ScopeKind,
-	pub span: proc_macro2::Span,
-	pub owner: Option<ResolvedNode>,
-}
 fn resolve_scope(node_context: &NodeContext) -> Option<ScopeContext> {
 	todo!("h")
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum RelationKind {
-	// Structural
-	Contains,
-	DefinedIn,
-	DeclaredIn,
-	// Ownership
-	Owns,
-	OwnedBy,
-	MovesTo,
-	MovedFrom,
-	// Borrowing
-	BorrowOf,
-	BorrowedBy,
-	MutableBorrowOf,
-	ImmutableBorrowOf,
-	// Aliasing
-	AliasOf,
-	CloneOf,
-	// Data flow
-	AssignedFrom,
-	DerivedFrom,
-	DependsOn,
-	// Scope / visibility
-	VisibleIn,
-	CapturedBy,
-	// Usage
-	References,
-	Calls,
-
-	// Add:
-	PassedAsArgument,
-	ReturnedFrom,
-}
-#[derive(Clone, Debug, Serialize)]
-pub enum InfluenceKind {
-	Declaration,
-	Assignment,
-	Borrow,
-	Move,
-	Mutation,
-	Alias,
-}
-
 fn build_final_analysis(context: &ClickContext, symbols: Option<&[LineRelated]>) -> String {
 	let mut output = String::new();
 
@@ -1798,98 +1278,6 @@ fn build_final_analysis(context: &ClickContext, symbols: Option<&[LineRelated]>)
 
 	output
 }
-fn print_final_analysis(context: &ClickContext, symbols: Option<&[LineRelated]>) {
-	println!("================ CLICK CONTEXT ================");
-	println!("FILE   : {}", context.file.display());
-	println!("LINE   : {}", context.line);
-	println!("COLUMN : {}", context.column);
-	println!();
-	println!("SOURCE:");
-	let symbols = symbols.unwrap_or(&[]);
-	for (idx, source_line) in context.source.lines().enumerate() {
-		let line_number = idx + 1;
-		let labels: Vec<String> = symbols
-			.iter()
-			.filter(|s| s.line == line_number)
-			.map(|s| format!("{:?}", s.relations))
-			.collect();
-		if labels.is_empty() {
-			println!("{:>4} | {}", line_number, source_line);
-		} else {
-			println!(
-				"{:>4} | {:<50} // {}",
-				line_number,
-				source_line,
-				labels.join(", ")
-			);
-		}
-		// Always show cursor position
-		if line_number == context.line {
-			let prefix = format!("{:>4} | ", line_number);
-			println!(
-				"{}{}^ (column {})",
-				" ".repeat(prefix.len()),
-				" ".repeat(context.column as usize),
-				context.column
-			);
-		}
-	}
-	// In case the click line is outside the source range
-	if context.line > context.source.lines().count() {
-		println!();
-		println!(
-			"CLICK POSITION OUT OF RANGE: line {}, column {}",
-			context.line, context.column
-		);
-	}
-	println!("===============================================");
-}
-fn print_final_analysisold(context: &ClickContext, symbols: Option<&[LineSymbol]>) {
-	println!("================ CLICK CONTEXT ================");
-	println!("FILE   : {}", context.file.display());
-	println!("LINE   : {}", context.line);
-	println!("COLUMN : {}", context.column);
-	println!();
-	println!("SOURCE:");
-	let symbols = symbols.unwrap_or(&[]);
-	for (idx, source_line) in context.source.lines().enumerate() {
-		let line_number = idx + 1;
-		let labels: Vec<String> = symbols
-			.iter()
-			.filter(|s| s.line == line_number)
-			.map(|s| format!("{}:{:?}", s.name, s.role))
-			.collect();
-		if labels.is_empty() {
-			println!("{:>4} | {}", line_number, source_line);
-		} else {
-			println!(
-				"{:>4} | {:<50} // {}",
-				line_number,
-				source_line,
-				labels.join(", ")
-			);
-		}
-		// Always show cursor position
-		if line_number == context.line {
-			let prefix = format!("{:>4} | ", line_number);
-			println!(
-				"{}{}^ (column {})",
-				" ".repeat(prefix.len()),
-				" ".repeat(context.column as usize),
-				context.column
-			);
-		}
-	}
-	// In case the click line is outside the source range
-	if context.line > context.source.lines().count() {
-		println!();
-		println!(
-			"CLICK POSITION OUT OF RANGE: line {}, column {}",
-			context.line, context.column
-		);
-	}
-	println!("===============================================");
-}
 fn print_node_context(node_context: &NodeContext, kind: LineKind) {
 	println!("================ NODE CONTEXT =================");
 	if let Some(subject) = &node_context.subject {
@@ -1916,6 +1304,101 @@ fn print_node_context(node_context: &NodeContext, kind: LineKind) {
 	println!("===============================================");
 }
 
+struct OwnershipAnalysis {
+	pub related_lines: Vec<LineRelated>,
+	pub click: ClickContext,
+	pub node_context: NodeContext,
+	pub classification: NodeClassification,
+	pub symbols: Vec<LineSymbol>,
+}
+#[derive(Serialize)]
+pub struct AnalysisReport {
+	pub click: ClickContext,
+	pub analysis: AnalysisData,
+	pub formatted_output: String,
+}
+#[derive(Serialize)]
+pub struct AnalysisData {
+	pub related_lines: Vec<LineRelated>,
+	pub node_context: NodeContext,
+	pub classification: NodeClassification,
+	pub symbols: Vec<LineSymbol>,
+}
+pub type NodeId = usize;
+pub struct InfluenceGraph {
+	pub nodes: HashMap<NodeId, GraphNode>,
+	pub edges: Vec<GraphEdge>,
+}
+pub struct GraphNode {
+	pub id: NodeId,
+	pub name: String,
+	pub kind: AstNodeKind,
+	pub span: proc_macro2::Span,
+}
+pub struct GraphEdge {
+	pub from: NodeId,
+	pub to: NodeId,
+	pub relation: RelationKind,
+	pub influence: InfluenceKind,
+}
+pub enum ScopeKind {}
+pub struct ScopeContext {
+	pub kind: ScopeKind,
+	pub span: proc_macro2::Span,
+	pub owner: Option<ResolvedNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RelationKind {
+	// Structural
+	Contains,
+	DefinedIn,
+	DeclaredIn,
+	// Ownership
+	Owns,
+	OwnedBy,
+	MovesTo,
+	MovedFrom,
+	// Borrowing
+	BorrowOf,
+	BorrowedBy,
+	MutableBorrowOf,
+	ImmutableBorrowOf,
+	// Aliasing
+	AliasOf,
+	CloneOf,
+	// Data flow
+	AssignedFrom,
+	DerivedFrom,
+	DependsOn,
+	// Scope / visibility
+	VisibleIn,
+	CapturedBy,
+	// Usage
+	References,
+	Calls,
+
+	// Add:
+	PassedAsArgument,
+	ReturnedFrom,
+}
+#[derive(Clone, Debug, Serialize)]
+pub enum InfluenceKind {
+	Declaration,
+	Assignment,
+	Borrow,
+	Move,
+	Mutation,
+	Alias,
+}
+
+#[derive(Debug)]
+pub struct VariableMetadata {
+	pub name: String,
+	pub mutable: bool,
+	pub ty: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub enum NodeClassification {
 	Variable,
@@ -1936,12 +1419,387 @@ pub struct SymInfo {
 	pub defined_at: Span, // Where it was born
 }
 
+impl Workspace {
+  fn print_click_report(report: &ClickReport) {
+		Self::print_click_analysis(
+			&report.context,
+			&report.symbols,
+			report.node_context.as_ref(),
+		);
+	}
+	fn print_click_analysis(
+		context: &ClickContext,
+		symbols: &[LineSymbol],
+		node_context: Option<&NodeContext>
+	) {
+		println!("================ CLICK ANALYSIS ================");
+		println!("FILE   : {}", context.file.display());
+		println!("LINE   : {}", context.line);
+		println!("COLUMN : {}", context.column);
+		println!();
+		println!("SOURCE:");
+		for (idx, source_line) in context.source.lines().enumerate() {
+			let line_number = idx + 1;
+			let labels: Vec<_> = symbols
+				.iter()
+				.filter(|s| s.line == line_number)
+				.map(|s| format!("{}:{:?}", s.name, s.role))
+				.collect();
+			match labels.is_empty() {
+				true => {
+					println!("{:>4} | {}", line_number, source_line);
+				}
+				false => {
+					println!(
+						"{:>4} | {:<50} // {}",
+						line_number,
+						source_line,
+						labels.join(", ")
+					);
+				}
+			}
+			if line_number == context.line {
+				println!(
+					"{:>width$}^ column {}",
+					"",
+					context.column,
+					width = context.column as usize + 8
+				);
+			}
+		}
+		// if let Some(node_context) = &report.node_context {
+		//     println!();
+		//     print_node_context(
+		//         node_context,
+		//         LineKind::Cursor,
+		//     );
+		// }
+	}
+ 	fn roadmap() {
+		// To nail the compiler boundaries for an interactive click-to-analyze tool (like a language server feature), you want to separate **Phase 1: Query Extraction** (point-in-time lookup) from **Phase 2: Whole-File Semantic Mapping** (line-by-line analysis).
+
+		// Since you are working with `syn::File` (standard Rust AST structures), you can implement `collect_lines` by using a **visitor pattern** or a recursive span-matching pass that scans the syntax tree once and projects the AST nodes onto their respective source lines.
+
+		// Here is how you can structure the boundary and implement `collect_lines`:
+
+		// ### 1. The Compiler Pipeline Boundary
+
+		// * **Pipeline A (Targeted Query):** Click coordinates $\rightarrow$ `resolve_node` $\rightarrow$ Find the exact AST node and its path/ancestors. (Fast, localized, bottom-up).
+		// * **Pipeline B (Whole-File Render/Analysis):** Source string + AST $\rightarrow$ `collect_lines` $\rightarrow$ Line-by-line symbol mapping (Top-down AST walk mapping spans to line numbers).
+		// * **Pipeline C (The Link):** Compare Pipeline A's resolved subject against Pipeline B's line symbols to answer "does this line affect my click?"
+
+		// ---
+
+		// ### 2. Implementing `collect_lines`
+
+		// Since `syn` nodes carry span information (`syn::spanned::Spanned`), you can walk the AST, find declarations, expressions, and identifiers, figure out which line number they sit on, and populate your `LineAnalysis` structures.
+
+		fn collect_lines(source: &str, syntax_tree: &syn::File) -> Vec<LineAnalysis> {
+			let raw_lines: Vec<&str> = source.lines().collect();
+			let lines_count = raw_lines.len();
+
+			// Maps line numbers to their respective symbol references
+			let mut line_map: HashMap<usize, Vec<SymReference>> = HashMap::new();
+
+			// The symbol registry / scope table tracking known definitions top-down
+			let mut symbol_registry: HashMap<String, SymInfo> = HashMap::new();
+			let mut next_id = 0;
+
+			// Walk the AST items
+			for item in &syntax_tree.items {
+				collect_item(item, &mut line_map, &mut symbol_registry, &mut next_id);
+			}
+
+			// Build the final vector mapping line-by-line
+			(1..=lines_count)
+				.map(|line_num| {
+					let text = raw_lines.get(line_num - 1).unwrap_or(&"").to_string();
+					let symbols = line_map.remove(&line_num).unwrap_or_default();
+
+					LineAnalysis {
+						line: line_num,
+						text,
+						flags: LineFlags::default(), // Adjust based on your struct definition
+						symbols,
+					}
+				})
+				.collect()
+		}
+
+		fn collect_item(
+			item: &syn::Item,
+			line_map: &mut HashMap<usize, Vec<SymReference>>,
+			registry: &mut HashMap<String, SymInfo>,
+			next_id: &mut usize,
+		) {
+			if let syn::Item::Fn(item_fn) = item {
+				// Register function definition if needed
+				for stmt in &item_fn.block.stmts {
+					collect_stmt(stmt, line_map, registry, next_id);
+				}
+			}
+		}
+
+		fn collect_stmt(
+			stmt: &syn::Stmt,
+			line_map: &mut HashMap<usize, Vec<SymReference>>,
+			registry: &mut HashMap<String, SymInfo>,
+			next_id: &mut usize,
+		) {
+			match stmt {
+				syn::Stmt::Local(local) => {
+					let line = local.span().start().line;
+
+					// 1. Handle the binding (Declaration site)
+					if let syn::Pat::Ident(pat_ident) = &local.pat {
+						let name = pat_ident.ident.to_string();
+						let sym_info = SymInfo {
+							id: *next_id,
+							name: name.clone(),
+							defined_at: local.span(),
+						};
+						registry.insert(name.clone(), sym_info);
+						*next_id += 1;
+
+						let info = registry.get(&name).unwrap();
+
+						// Record declaration reference pointing back to its info
+						line_map.entry(line).or_default().push(SymReference {
+							name,
+							role: SymRole::Declaration, // Ensure role is explicitly set here
+							span: local.span(),
+							resolved_id: Some(info.id),
+						});
+					}
+
+					// 2. Handle the right-hand side initializer (Modern syn::LocalInit access)
+					if let Some(init) = &local.init {
+						collect_expr(&init.expr, line_map, registry);
+					}
+				}
+				syn::Stmt::Expr(expr, _) => {
+					collect_expr(expr, line_map, registry);
+				}
+				_ => {}
+			}
+		}
+
+		fn collect_expr(
+			expr: &syn::Expr,
+			line_map: &mut HashMap<usize, Vec<SymReference>>,
+			registry: &HashMap<String, SymInfo>,
+		) {
+			match expr {
+				syn::Expr::Path(expr_path) => {
+					if let Some(ident) = expr_path.path.get_ident() {
+						let name = ident.to_string();
+						let line = expr_path.span().start().line;
+						let resolved_id = registry.get(&name).map(|info| info.id);
+
+						line_map.entry(line).or_default().push(SymReference {
+							name,
+							role: SymRole::Reference,
+							span: expr_path.span(),
+							resolved_id,
+						});
+					}
+				}
+				syn::Expr::Binary(binary) => {
+					collect_expr(&binary.left, line_map, registry);
+					collect_expr(&binary.right, line_map, registry);
+				}
+				_ => {}
+			}
+		}
+
+		// Example recursive extractor for syn items/statements
+		// fn extract_symbols_from_item(item: &syn::Item, line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>) {
+		//     match item {
+		//         syn::Item::Fn(item_fn) => {
+		//             let line = item_fn.span().start().line;
+		//             // Record function scope / definition symbol
+		//             line_map.entry(line).or_default().push(SymInfo {
+		//                 // id: ,
+		//                 defined_at: Span,
+		//                 name: item_fn.sig.ident.to_string(),
+		//                 role: SymRole::Function,
+		//             });
+
+		//             // Walk statements inside the function body
+		//             for stmt in &item_fn.block.stmts {
+		//                 extract_symbols_from_stmt(stmt, line_map);
+		//             }
+		//         }
+		//         _ => {}
+		//     }
+		// }
+
+		// fn extract_symbols_from_stmt(stmt: &syn::Stmt, line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>) {
+		//     match stmt {
+		//         syn::Stmt::Local(local) => {
+		//             let line = local.span().start().line;
+		//             // Extract the variable name being bound (e.g., `spam` in `let spam = bar;`)
+		//             if let syn::Pat::Ident(pat_ident) = &local.pat {
+		//                 line_map.entry(line).or_default().push(SymInfo {
+		//                     name: pat_ident.ident.to_string(),
+		//                     role: SymRole::Declaration,
+		//                 });
+		//             }
+		//             // You can also inspect local.init for references (like `bar`)
+		//         }
+		//         syn::Stmt::Expr(expr, _) => {
+		//             extract_symbols_from_expr(expr, line_map);
+		//         }
+		//         _ => {}
+		//     }
+		// }
+
+		fn extract_symbols_from_expr(
+			_expr: &syn::Expr,
+			_line_map: &mut std::collections::HashMap<usize, Vec<SymInfo>>,
+		) {
+			// Recursively pull identifiers/references from expressions
+		}
+
+		// Phase 1: Query Extraction
+		// VSCode
+		// - Fold range from selection from VSCODE ( fold everything selectede. better than)
+
+		// struct ClickAnalysis {
+		//     file_path: PathBuf,
+		//     source: String,
+		//     tree: SyntaxTree,
+		//     position: Position,
+		// }
+		// 1. Click
+		//    - file
+		//    - line
+		//    - column
+		//    - cursor position
+		// 2. Find relevant lines
+		//    LineRelated[]
+		//    Example:
+		//    line 2 -> Scope
+		//    line 3 -> Scope
+		//    line 9 -> Scope
+		// 3. Populate symbols inside those lines
+		//    Line 3:
+		//       symbol: bar
+		//       role: Declaration
+		//    Line 9:
+		//       symbol: bar
+		//       role: Reference
+		// 4. Compare symbols against clicked subject
+		//    Subject:
+		//       bar
+		//    Line 3:
+		//       bar declaration
+		//       affects subject: true
+		//    Line 2:
+		//       foo declaration
+		//       affects subject: false
+		//
+		// 5. Add flags
+		//    LineAnalysis {
+		//        line: 3,
+		//        symbols: [
+		//            {
+		//              name: "bar",
+		//              role: "declaration",
+		//              relation_to_subject: "defines"
+		//            }
+		//        ],
+		//        flags: {
+		//            in_scope: true,
+		//            influences_subject: true,
+		//            unrelated: false
+		//        }
+		//    }
+		// 6. Render different views
+		//    Decorations:
+		//       - highlight influence lines
+		//       - grey unrelated lines
+		//    Inlay hints:
+		//       - show symbol roles
+		//    CodeLens:
+		//       - show actions
+		//    Webview:
+		//       - show graph
+		// pub fn analyze_ownership_on_click(
+		//     file_path: &PathBuf,
+		//     options: &AnalyzerOptions,
+		// ) -> Result<OwnershipAnalysisResult, AnalysisError> {
+		//     let source = load_source(file_path)?;
+		// 1. Identify Subject
+		//     let click = ClickContext::new(
+		//         file_path,
+		//         &source,
+		//         options,
+		//     );
+		// 2.
+		//     let ast = parse_source(&source)?;
+		//     let subject = resolve_subject(
+		//         &ast,
+		//         &source,
+		//         &click,
+		//     )?;
+		//     let scope = find_scope(
+		//         &ast,
+		//         &click,
+		//     );
+		//     let mut lines = collect_lines(
+		//         &source,
+		//         &scope,
+		//     );
+		//     let symbols = collect_symbols(
+		//         &ast,
+		//         &lines,
+		//     );
+		//     let relations = analyze_relationships(
+		//         &subject,
+		//         &symbols,
+		//     );
+		//     classify_lines(
+		//         &mut lines,
+		//         &subject,
+		//         &relations,
+		//     );
+		//     Ok(build_analysis_result(
+		//         click,
+		//         subject,
+		//         scope,
+		//         lines,
+		//         symbols,
+		//         relations,
+		//     ))
+		// }
+		// Click
+		//  |
+		// Resolve AST node
+		//  |
+		// Collect ancestors
+		//  |
+		// Classify node
+		//  |
+		// Build influence edges
+		//  |
+		// Traverse outward
+		//  |
+		// Highlight affected lines
+	}
+}
 #[cfg(test)]
 mod tests {
 	use super::*;
 	enum Occurrence {
 		First,
 		Last,
+	}
+	fn test_source(source: &str) -> String {
+		source.strip_prefix('\n').unwrap_or(source).to_string()
+	}
+	fn parse_test_source(source: &str) -> syn::File {
+		syn::parse_file(source.trim_start()).unwrap()
 	}
 	fn source_line(source: &str, contains: &str) -> usize {
 		source
@@ -1959,30 +1817,6 @@ mod tests {
 
 		panic!("could not find {}", needle);
 	}
-	fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
-		let syntax_tree = syn::parse_file(source).unwrap();
-		let resolver = NodeResolver {
-			line,
-			column,
-			current_name: None,
-			position: pos(line, column),
-			candidates: Vec::new(),
-			best: None,
-			nodes: Vec::new(),
-			ancestors: Vec::new(),
-		};
-
-		resolver.resolve_file(&syntax_tree)
-	}
-	fn position_of_after(source: &str, needle: &str, start_line: usize) -> (usize, usize) {
-		for (line, text) in source.lines().enumerate().skip(start_line - 1) {
-			if let Some(column) = text.find(needle) {
-				return (line + 1, column);
-			}
-		}
-
-		panic!("could not find {} after line {}", needle, start_line);
-	}
 	fn positions_of(source: &str, needle: &str) -> Vec<(usize, usize)> {
 		let mut result = Vec::new();
 
@@ -1998,44 +1832,8 @@ mod tests {
 
 		result
 	}
-	fn resolve_click_on(source: &str, name: &str, occurrence: Occurrence) -> NodeContext {
-		let (line, column) = match occurrence {
-			Occurrence::First => position_of(source, name),
-			Occurrence::Last => position_of_last(source, name),
-		};
-
-		resolve_click(source, line, column)
-	}
-	// fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
-	// 	let syntax_tree = syn::parse_file(source).unwrap();
-
-	// 	let resolver = NodeResolver {
-	// 		line,
-	// 		column,
-	// 		current_name: None,
-	// 		position: pos(line, column),
-	// 		candidates: Vec::new(),
-	// 		best: None,
-	// 		nodes: Vec::new(),
-	// 		ancestors: Vec::new(),
-	// 	};
-
-	// 	resolver.resolve_file(&syntax_tree)
-	// }
-
-	// fn position_of(source: &str, needle: &str) -> (usize, usize) {
-	// 	for (line, text) in source.lines().enumerate() {
-	// 		if let Some(column) = text.find(needle) {
-	// 			return (line + 1, column);
-	// 		}
-	// 	}
-
-	// 	panic!("could not find {}", needle);
-	// }
-
 	fn position_of_last(source: &str, needle: &str) -> (usize, usize) {
 		let mut found = None;
-
 		for (line, text) in source.lines().enumerate() {
 			if let Some(column) = text.rfind(needle) {
 				found = Some((line + 1, column));
@@ -2044,22 +1842,38 @@ mod tests {
 
 		found.expect("could not find occurrence")
 	}
+	fn position_of_after(source: &str, needle: &str, start_line: usize) -> (usize, usize) {
+		for (line, text) in source.lines().enumerate().skip(start_line - 1) {
+			if let Some(column) = text.find(needle) {
+				return (line + 1, column);
+			}
+		}
 
-	// fn assert_subject(context: &NodeContext, expected: AstNodeKind) {
-	// 	let subject = context.subject.as_ref().expect("expected subject");
+		panic!("could not find {} after line {}", needle, start_line);
+	}
+	fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
+		let syntax_tree = syn::parse_file(source).unwrap();
+		let resolver = NodeResolver {
+			line,
+			column,
+			current_name: None,
+			position: pos(line, column),
+			candidates: Vec::new(),
+			best: None,
+			nodes: Vec::new(),
+			ancestors: Vec::new(),
+		};
 
-	// 	assert_eq!(subject.kind, expected);
-	// }
+		resolver.resolve_file(&syntax_tree)
+	}
+	fn resolve_click_on(source: &str, name: &str, occurrence: Occurrence) -> NodeContext {
+		let (line, column) = match occurrence {
+			Occurrence::First => position_of(source, name),
+			Occurrence::Last => position_of_last(source, name),
+		};
 
-	// fn assert_local(context: &NodeContext, mutable: Option<bool>) {
-	// 	let local = context
-	// 		.ancestors
-	// 		.iter()
-	// 		.find(|node| node.kind == AstNodeKind::Local)
-	// 		.expect("expected Local ancestor");
-
-	// 	assert_eq!(local.mutable, mutable);
-	// }
+		resolve_click(source, line, column)
+	}
 	macro_rules! assert_subject {
 		($context:expr, $kind:expr) => {{
 			let subject = $context.subject.as_ref().expect("expected subject");
@@ -2081,14 +1895,6 @@ mod tests {
 	// 	println!("MACRO {:?}", node.mac.path);
 	// 	syn::visit::visit_expr_macro(self, node);
 	// }
-	// macro_rules! assert_subject {
-	// 	($context:expr, $expected:expr) => {{
-	// 		let subject = $context.subject.as_ref().expect("expected subject");
-
-	// 		assert_eq!(subject.kind, $expected);
-	// 	}};
-	// }
-
 	fn analyze_click_on(source: &str, name: &str, occurrence: Occurrence) -> Vec<LineRelated> {
 		let (line, column) = match occurrence {
 			Occurrence::First => position_of(source, name),
@@ -2152,25 +1958,12 @@ mod tests {
 		}
 	}
 	fn assert_subject_name(context: &NodeContext, expected: &str) {
+	
 		let subject = context.subject.as_ref().expect("expected subject");
 
 		assert_eq!(subject.name.as_deref(), Some(expected));
 	}
-
-	#[test]
-	fn click_immutable_variable_declaration() {
-		let source = r#"
-	fn main() {
-	let item = "hello";
-	}
-	"#;
-
-		let context = resolve_click_on(source, "item", Occurrence::First);
-
-		assert_subject!(&context, AstNodeKind::PatternIdentifier);
-		assert_subject_name(&context, "item");
-		assert_local!(context, mutable = Some(false));
-	}
+	
 	#[test]
 	fn resolves_variable_usage_name() {
 		let source = r#"
@@ -2179,13 +1972,10 @@ mod tests {
 	let other = item;
 	}
 	"#;
-
 		let context = resolve_click_on(source, "item", Occurrence::Last);
-
 		assert_subject!(&context, AstNodeKind::Path);
 		assert_subject_name(&context, "item");
 	}
-
 	#[test]
 	fn resolves_variable_declaration() {
 		let source = r#"
@@ -2265,19 +2055,18 @@ mod tests {
 
 		assert_eq!(subject.kind, AstNodeKind::PatternIdentifier);
 	}
-	// #[test]
-	// fn click_immutable_variable_declaration() {
-	// 	let source = r#"
-	// fn main() {
-	//    let item = "hello";
-	// }
-	// "#;
-	// 	let context = resolve_click_on(source, "item", Occurrence::First);
-
-	// 	assert_subject(&context, AstNodeKind::PatternIdentifier);
-
-	// 	assert_local!(&context, Some(false));
-	// }
+	#[test]
+	fn click_immutable_variable_declaration() {
+		let source = r#"
+	fn main() {
+	let item = "hello";
+	}
+	"#;
+		let context = resolve_click_on(source, "item", Occurrence::First);
+		assert_subject!(&context, AstNodeKind::PatternIdentifier);
+		assert_subject_name(&context, "item");
+		assert_local!(context, mutable = Some(false));
+	}
 	#[test]
 	fn click_mutable_variable_declaration() {
 		let source = r#"
@@ -2357,11 +2146,9 @@ mod tests {
     let item = 2;
     println!("{}", item);
 	}
-
 	println!("{}", item);
 	}
 	"#;
-
 		let analysis = analyze_click_on(source, "item", Occurrence::First);
 	}
 	#[test]
@@ -2371,9 +2158,7 @@ mod tests {
     let item: i32 = 1;
 	}
 	"#;
-
 		let node = resolve_click_on(source, "item", Occurrence::First);
-
 		// assert_eq!(node.type_name, Some("i32".into()));
 	}
 	#[test]
@@ -2382,32 +2167,13 @@ mod tests {
 	fn foo(item: i32) {
     println!("{}", item);
 	}
-
 	fn main() {
     let item = "hello";
     println!("{}", item);
 	}
 	"#;
-
 		let analysis = analyze_click_on(source, "item", Occurrence::Last);
-
 		assert_line(&analysis, 7, OwnershipRelation::Declaration);
 		assert_line(&analysis, 8, OwnershipRelation::Reference);
-
-		// should NOT contain foo's itemf
 	}
-}
-
-#[derive(Debug)]
-pub struct VariableMetadata {
-	pub name: String,
-	pub mutable: bool,
-	pub ty: Option<String>,
-}
-fn parse_test_source(source: &str) -> syn::File {
-	syn::parse_file(source.trim_start()).unwrap()
-}
-
-fn test_source(source: &str) -> String {
-	source.strip_prefix('\n').unwrap_or(source).to_string()
 }

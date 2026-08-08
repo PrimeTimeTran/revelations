@@ -14,7 +14,6 @@ use syn::{
 	visit::{self, Visit},
 	visit_mut::{self, VisitMut},
 };
-
 ///--------------------------------------------------------------------------------
 ///      Pipelines:
 ///      - Estate(namespace definition): Are we in a workspace and how many packages do we have?
