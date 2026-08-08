@@ -89,24 +89,24 @@ impl Workspace {
 		}
 	}
 	fn resolve_subject(
-	    options: &AnalyzerOptions,
-	    syntax_tree: &File,
-					line: usize,
-					column: usize,
+		options: &AnalyzerOptions,
+		syntax_tree: &File,
+		line: usize,
+		column: usize,
 	) -> Result<NodeContext, AnalysisError> {
-  	let mut resolver = NodeResolver {
-  		line,
-  		column,
-  		current_name: None,
-  		position: pos(line, column),
-  		candidates: Vec::new(),
-  		best: None,
-  		nodes: Vec::new(),
-  		ancestors: Vec::new(),
-  	};
-    resolver.visit_file(&syntax_tree);
-    let node = resolver.resolve();
-    Ok(node)
+		let mut resolver = NodeResolver {
+			line,
+			column,
+			current_name: None,
+			position: pos(line, column),
+			candidates: Vec::new(),
+			best: None,
+			nodes: Vec::new(),
+			ancestors: Vec::new(),
+		};
+		resolver.visit_file(&syntax_tree);
+		let node = resolver.resolve();
+		Ok(node)
 	}
 	fn resolve_click(ast: &syn::File, context: &ClickContext) -> Option<NodeContext> {
 		let nodes = Self::collect_nodes(ast);
@@ -174,6 +174,31 @@ impl Workspace {
 			size
 		})
 	}
+	fn build_graph(
+		tree: &File,
+		file_path: &PathBuf,
+		options: &AnalyzerOptions,
+		subject: &Option<ResolvedNode>,
+	) -> Result<Graph, AnalysisError> {
+		let subject = subject
+			.as_ref()
+			.ok_or_else(|| AnalysisError::Parse("No subject node found at position".into()))?;
+
+		let mut graph = Graph::new();
+
+		let mut visitor = OwnershipVisitor::new(
+			subject.clone(),
+			subject.name.clone(),
+			options.clone(),
+			&mut graph,
+		);
+
+		visitor.options = options.clone();
+
+		visitor.visit_file(tree);
+
+		Ok(graph)
+	}
 
 	pub fn analyze_ownership_on_click(
 		file_path: &PathBuf,
@@ -192,12 +217,45 @@ impl Workspace {
 			Some(node) => log.print("Subject", Vals::new().subject(node)),
 			None => println!("NONE"),
 		}
-
 		let classification = Self::classify_node(&context);
 		log.print(
 			"Classification",
 			Vals::new().classification(&classification),
 		);
+		// ─────────────────────────────────────
+		// 4. Build semantic graph
+		// ─────────────────────────────────────
+		let mut graph = Self::build_graph(&syntax_tree, file_path, options, &context.subject)?;
+
+		// ─────────────────────────────────────
+		// 5. Find subject graph node
+		// ─────────────────────────────────────
+
+		// let subject_id = graph
+		// .find_subject(&context.subject)
+		// .ok_or_else(|| {
+		//     AnalysisError::Parse(
+		//         "Subject not found in graph".into()
+		//     )
+		// })?;
+
+		// // ─────────────────────────────────────
+		// // 6. Traverse downstream influence
+		// // ─────────────────────────────────────
+
+		// let affected = graph.downstream(subject_id);
+
+		// // ─────────────────────────────────────
+		// // 7. Project graph → source lines
+		// // ─────────────────────────────────────
+
+		// let lines = Self::build_line_analysis(
+		//     &syntax_tree,
+		//     &graph,
+		//     subject_id,
+		//     &affected,
+		//     file_path,
+		// );
 
 		for ancestor in &context.ancestors {
 			log.print("Ancestors", Vals::new().ancestors(&ancestor.kind));
@@ -225,23 +283,17 @@ impl Workspace {
 		// let node = graph.find(subject);
 		// let affected = graph.walk(node);
 		// let subject_name = subject.name.clone();
-		let mut ownership_visitor = OwnershipVisitor {
-			next_id: 0,
-			subject: subject.clone(),
-			subject_name: subject.name.clone(),
-			subject_symbol: None,
-			scopes: vec![HashMap::new()],
-			scope_spans: Vec::new(),
-			options: options.clone(),
-			related_spans: Vec::new(),
-			related_symbols: Vec::new(),
-		};
+		let mut ownership_visitor = OwnershipVisitor::new(
+			subject.clone(),
+			subject.name.clone(),
+			options.clone(),
+			&mut graph,
+		);
 		ownership_visitor.visit_file(&syntax_tree);
 		let scope = Self::find_scope_at_position(&syntax_tree, options);
 		let related_lines =
 			Self::stage_build_related_lines_from_subject(&subject, &ownership_visitor, file_path);
 		// eprintln!("context {:?}", context);
-		
 		// eprintln!("related_lines {:?}", related_lines);
 		// eprintln!("classification {:?}", classification);
 		Self::stage_report(context, click, related_lines, classification)
@@ -459,7 +511,9 @@ pub struct LineAnalysis {
 	pub text: String,
 	pub flags: LineFlags,
 	pub symbols: Vec<SymReference>,
+	pub relations: Vec<OwnershipRelation>,
 }
+
 pub struct LineAnnotation {
 	pub line: usize,
 	pub text: String,
@@ -915,15 +969,22 @@ pub enum OwnershipRole {
 	Clone,
 	Usage,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum OwnershipRelation {
-	Scope,
 	Declaration,
-	ImmutableBorrow,
 	Reference,
+	Definition,
+	Downstream,
+	Upstream,
+	Assignment,
+	Argument,
+	Return,
+	Mutation,
+	Scope,
+	ImmutableBorrow,
 	MutableBorrow,
 	MoveOwnership,
-	Assignment,
 }
 
 // - Subject: Identifier clicked on
@@ -931,31 +992,37 @@ pub enum OwnershipRelation {
 // - Ancestor: An identfiier which influences the ownership of this subject.
 // - Descendents: Identifies who are influenced by this subject
 // - Scope:
-#[derive(Debug, Clone)]
-pub struct OwnershipVisitor {
+#[derive(Debug)]
+pub struct OwnershipVisitor<'a> {
 	subject: ResolvedNode,
 	pub subject_name: Option<String>,
 	subject_symbol: Option<usize>,
-
 	scopes: Vec<HashMap<String, usize>>,
 	pub scope_spans: Vec<proc_macro2::Span>,
 	next_id: usize,
 	pub options: AnalyzerOptions,
 	pub related_spans: Vec<proc_macro2::Span>,
 	pub related_symbols: Vec<SymReference>,
+	pub graph: &'a mut Graph,
 }
-impl OwnershipVisitor {
-	pub fn new(subject: ResolvedNode, subject_name: Option<String>) -> Self {
+impl<'a> OwnershipVisitor<'a> {
+	pub fn new(
+		subject: ResolvedNode,
+		subject_name: Option<String>,
+		options: AnalyzerOptions,
+		graph: &'a mut Graph,
+	) -> Self {
 		Self {
-			options: AnalyzerOptions::default(),
 			subject,
 			subject_name,
+			options,
 			subject_symbol: None,
 			scopes: vec![HashMap::new()],
 			scope_spans: Vec::new(),
 			related_spans: Vec::new(),
 			related_symbols: Vec::new(),
 			next_id: 0,
+			graph,
 		}
 	}
 	// Helper to enter a new block/scope
@@ -996,7 +1063,7 @@ impl OwnershipVisitor {
 //     fn visit_item_fn(&mut self, node: &'ast syn::Expr) {}
 //     fn visit_expr_path(&mut self, node: &'ast syn::Expr) {}
 // }
-impl<'ast> syn::visit::Visit<'ast> for OwnershipVisitor {
+impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 	fn visit_expr(&mut self, node: &'ast syn::Expr) {
 		match node {
 			syn::Expr::MethodCall(method) => {
@@ -1183,9 +1250,9 @@ use std::{
 use std::{fmt::Write, io::Write as _};
 use swc_core::common::LineCol;
 use syn::{
-	Token, File, Ident,
-	token::Token,
+	File, Ident, Token,
 	spanned::Spanned,
+	token::Token,
 	visit::{self, Visit, visit_local},
 	visit_mut::{self, VisitMut},
 };
@@ -1325,22 +1392,40 @@ pub struct AnalysisData {
 	pub symbols: Vec<LineSymbol>,
 }
 pub type NodeId = usize;
-pub struct InfluenceGraph {
-	pub nodes: HashMap<NodeId, GraphNode>,
+
+#[derive(Clone, Debug)]
+pub struct Graph {
+	pub nodes: Vec<GraphNode>,
 	pub edges: Vec<GraphEdge>,
 }
+impl Graph {
+	pub fn new() -> Self {
+		Self {
+			nodes: Vec::new(),
+			edges: Vec::new(),
+		}
+	}
+}
+
+// pub struct InfluenceGraph {
+// 	pub nodes: HashMap<NodeId, GraphNode>,
+// 	pub edges: Vec<GraphEdge>,
+// }
+#[derive(Clone, Debug)]
 pub struct GraphNode {
 	pub id: NodeId,
 	pub name: String,
 	pub kind: AstNodeKind,
 	pub span: proc_macro2::Span,
 }
+#[derive(Clone, Debug)]
 pub struct GraphEdge {
 	pub from: NodeId,
 	pub to: NodeId,
 	pub relation: RelationKind,
 	pub influence: InfluenceKind,
 }
+
 pub enum ScopeKind {}
 pub struct ScopeContext {
 	pub kind: ScopeKind,
@@ -1420,7 +1505,7 @@ pub struct SymInfo {
 }
 
 impl Workspace {
-  fn print_click_report(report: &ClickReport) {
+	fn print_click_report(report: &ClickReport) {
 		Self::print_click_analysis(
 			&report.context,
 			&report.symbols,
@@ -1430,7 +1515,7 @@ impl Workspace {
 	fn print_click_analysis(
 		context: &ClickContext,
 		symbols: &[LineSymbol],
-		node_context: Option<&NodeContext>
+		node_context: Option<&NodeContext>,
 	) {
 		println!("================ CLICK ANALYSIS ================");
 		println!("FILE   : {}", context.file.display());
@@ -1475,7 +1560,7 @@ impl Workspace {
 		//     );
 		// }
 	}
- 	fn roadmap() {
+	fn roadmap() {
 		// To nail the compiler boundaries for an interactive click-to-analyze tool (like a language server feature), you want to separate **Phase 1: Query Extraction** (point-in-time lookup) from **Phase 2: Whole-File Semantic Mapping** (line-by-line analysis).
 
 		// Since you are working with `syn::File` (standard Rust AST structures), you can implement `collect_lines` by using a **visitor pattern** or a recursive span-matching pass that scans the syntax tree once and projects the AST nodes onto their respective source lines.
@@ -1519,6 +1604,7 @@ impl Workspace {
 					LineAnalysis {
 						line: line_num,
 						text,
+						relations: vec![],
 						flags: LineFlags::default(), // Adjust based on your struct definition
 						symbols,
 					}
@@ -1904,25 +1990,17 @@ mod tests {
 		let syntax_tree = syn::parse_file(source).unwrap();
 
 		let context = resolve_click(source, line, column);
+		println!("CLICK {}:{} on {}", line, column, name);
 
 		let subject = context.subject.expect("expected subject");
-		println!("CLICK {}:{} on {}", line, column, name);
-		let mut visitor = OwnershipVisitor {
-			subject: subject.clone(),
-			subject_name: subject.name.clone(),
-			subject_symbol: None,
-			related_spans: vec![],
-			related_symbols: vec![],
-			scopes: vec![HashMap::new()],
-			scope_spans: Vec::new(),
-			next_id: 0,
-
-			options: AnalyzerOptions {
-				line: Some(line as u32),
-				column: Some(column as u32),
-				..Default::default()
-			},
-		};
+		let mut graph = Graph::new();
+		let options = AnalyzerOptions::default();
+		let mut visitor = OwnershipVisitor::new(
+			subject.clone(),
+			subject.name.clone(),
+			options.clone(),
+			&mut graph,
+		);
 		visitor.visit_file(&syntax_tree);
 
 		Workspace::stage_build_related_lines_from_subject(&subject, &visitor, &PathBuf::from("test.rs"))
@@ -1958,12 +2036,11 @@ mod tests {
 		}
 	}
 	fn assert_subject_name(context: &NodeContext, expected: &str) {
-	
 		let subject = context.subject.as_ref().expect("expected subject");
 
 		assert_eq!(subject.name.as_deref(), Some(expected));
 	}
-	
+
 	#[test]
 	fn resolves_variable_usage_name() {
 		let source = r#"
