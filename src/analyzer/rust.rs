@@ -554,6 +554,8 @@ pub enum NodeKind {
 	Statement,
 	Expression,
 	Identifier,
+	Local,
+	PatternIdentifier,
 	Unknown,
 }
 
