@@ -204,13 +204,9 @@ impl Workspace {
 		}
 		let ownership = Self::build_graph(syntax_tree, options, subject);
 
+		let lines = Self::stage_build_line_analysis(&ownership, file_path, source);
 		// let lines = Self::stage_build_line_analysis(&ownership, file_path, source);
-		let lines = Self::stage_build_related_lines_from_subject(&ownership, file_path, subject);
-		for line in &lines {
-			if !line.relations.is_empty() {
-				println!("RELATED LINE {} => {:?}", line.line, line.relations);
-			}
-		}
+		// let lines = Self::stage_build_related_lines_from_subject(&ownership, file_path, subject);
 		Self::stage_report(ctx, click, lines, classification)
 	}
 	pub fn analyze_ownership_on_click(
@@ -220,6 +216,7 @@ impl Workspace {
 		let (source, syntax_tree) = Self::parse_file(file_path)?;
 		Self::analyze_ownership(file_path, &source, &syntax_tree, options)
 	}
+
 	pub fn stage_build_line_analysis(
 		ownership: &OwnershipGraph,
 		file_path: &PathBuf,
@@ -242,33 +239,61 @@ impl Workspace {
 				}
 			}
 		};
-
+		for (span, relation) in &ownership.related_spans {
+			let s = span.start();
+			let e = span.end();
+			println!(
+				"RELATED SPAN: {:?} {}:{} -> {}:{}",
+				relation, s.line, s.column, e.line, e.column,
+			);
+			add(s.line, relation.clone());
+		}
+		// Subject declaration/reference locations only.
 		let Some(subject_id) = ownership.subject_id else {
 			return lines;
 		};
-		let downstream = Self::build_downstream(&ownership.graph, &subject_id);
-		for (span, relation) in &ownership.related_spans {
-			add(span.start().line, relation.clone());
-		}
+
+		// for symbol in &ownership.symbols {
+		// 	println!(
+		// 		"SYMBOL: id={:?} name={} role={:?} relation={:?} start-line/end-line={}:{} start-col/end-col={}:{} ",
+		// 		symbol.resolved_id,
+		// 		symbol.name,
+		// 		symbol.role,
+		// 		symbol.relation,
+		// 		symbol.span.start().line,
+		// 		symbol.span.end().line,
+
+		// 		symbol.span.start().column,
+		// 		symbol.span.end().column,
+		// 	);
+		// 	if symbol.resolved_id != Some(subject_id) {
+		// 		continue;
+		// 	}
+
+		// 	match symbol.role {
+		// 		SymRole::Declaration => {
+		// 			add(symbol.span.start().line, OwnershipRelation::Declaration);
+		// 		}
+
+		// 		SymRole::Reference => {
+		// 			add(symbol.span.start().line, OwnershipRelation::Reference);
+		// 		}
+
+		// 		_ => {}
+		// 	}
+		// }
 		for symbol in &ownership.symbols {
-			let Some(id) = symbol.resolved_id else {
-				continue;
-			};
-			if id != subject_id && !downstream.contains(&id) {
+			if symbol.resolved_id != Some(subject_id) {
 				continue;
 			}
+
 			match symbol.role {
-				SymRole::Reference => {
+				SymRole::Declaration | SymRole::Reference => {
 					add(symbol.span.start().line, symbol.relation.clone());
 				}
-				SymRole::Declaration => {
-					// Deliberately don't add declarations here.
-				}
-
 				_ => {}
 			}
 		}
-
 		lines
 	}
 	pub fn stage_build_related_lines_from_subject(
@@ -277,25 +302,19 @@ impl Workspace {
 		_subject: &ResolvedNode,
 	) -> Vec<LineRelated> {
 		let mut related_lines = Vec::new();
-
 		let Some(subject_id) = ownership.subject_id else {
 			return related_lines;
 		};
-
 		let downstream = Self::build_downstream(&ownership.graph, &subject_id);
-
 		for symbol in &ownership.symbols {
 			let Some(id) = symbol.resolved_id else {
 				continue;
 			};
-
 			let is_subject = id == subject_id;
 			let is_downstream = downstream.contains(&id);
-
 			if !is_subject && !is_downstream {
 				continue;
 			}
-
 			Self::add_relation(
 				&mut related_lines,
 				symbol.span.start().line,
@@ -1232,7 +1251,6 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 
 		syn::visit::visit_expr_call(self, node);
 	}
-
 	fn visit_type(&mut self, node: &'ast syn::Type) {
 		match node {
 			syn::Type::Path(type_path) => {
@@ -1267,39 +1285,57 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		let id = self.define_symbol(name.clone());
 
 		self.related_symbols.push(SymReference {
-			name,
+			name: name.clone(),
 			span: pat_ident.ident.span().into(),
 			role: SymRole::Declaration,
 			resolved_id: Some(id),
 			relation: OwnershipRelation::Declaration,
 		});
 
-		// Visit the initializer first. This creates the call node.
+		// Visit the initializer first. This causes visit_expr_call()
+		// to create the call node and its argument edges.
 		syn::visit::visit_local(self, node);
 
-		if let Some(init) = &node.init {
-			if let syn::Expr::Call(call) = &*init.expr {
-				if let Some(call_id) = self.call_id_for(call) {
-					self.graph.add_relation(
-						call_id,
-						id,
-						RelationKind::Downstream,
-						InfluenceKind::Direct,
-						Some(OwnershipRelation::Return),
-					);
-				}
-			}
+		let Some(init) = &node.init else {
+			return;
+		};
+
+		let syn::Expr::Call(call) = &*init.expr else {
+			return;
+		};
+
+		let start = call.span().start();
+		let Some(&call_id) = self.call_ids.get(&(start.line, start.column)) else {
+			return;
+		};
+
+		// Only connect the call result to this local if this call
+		// is actually downstream of the subject.
+		let subject_related = self.subject_symbol.is_some_and(|subject_id| {
+			self
+				.graph
+				.edges
+				.iter()
+				.any(|edge| edge.from == subject_id && edge.to == call_id)
+		});
+		if !subject_related {
+			return;
 		}
+		self.graph.add_relation(
+			call_id,
+			id,
+			RelationKind::Downstream,
+			InfluenceKind::Direct,
+			Some(OwnershipRelation::Return),
+		);
+		self
+			.related_spans
+			.push((pat_ident.ident.span(), OwnershipRelation::Return));
 	}
 	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
 		let name = node.sig.ident.to_string();
 		let span = node.sig.ident.span();
-
-		// Function itself belongs to the enclosing scope.
 		let function_id = self.define_symbol(name.clone());
-
-		println!("DEFINE FUNCTION {} => {:?}", name, function_id);
-
 		self.related_symbols.push(SymReference {
 			name: name.clone(),
 			span: span.into(),
@@ -1307,8 +1343,6 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 			resolved_id: Some(function_id),
 			relation: OwnershipRelation::Definition,
 		});
-
-		// Now enter the function's local scope.
 		self.push_scope();
 
 		syn::visit::visit_item_fn(self, node);
@@ -1371,7 +1405,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 							if Some(id) == self.subject_symbol {
 								self
 									.related_spans
-									.push((lhs.span(), OwnershipRelation::Mutation));
+									.push((lhs.span(), OwnershipRelation::Assignment));
 
 								self.related_symbols.push(SymReference {
 									name,
@@ -1391,45 +1425,41 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		syn::visit::visit_expr_binary(self, node);
 	}
 	fn visit_macro(&mut self, node: &'ast syn::Macro) {
-		// println!("🔥 VISIT_MACRO");
-
-		// println!("MACRO PATH: {:?}", node.path);
-		// println!("MACRO TOKENS: {:?}", node.tokens);
-
 		self.visit_macro_tokens(node.tokens.clone());
-
 		syn::visit::visit_macro(self, node);
 	}
 	fn visit_expr_macro(&mut self, node: &'ast syn::ExprMacro) {
-		// println!("🔥 VISIT_EXPR_MACRO HIT");
-		// println!("MACRO PATH: {:?}", node.mac.path);
-		// println!("MACRO TOKENS: {:?}", node.mac.tokens);
-
 		self.visit_macro_tokens(node.mac.tokens.clone());
-
 		syn::visit::visit_expr_macro(self, node);
 	}
 	fn visit_expr_assign(&mut self, node: &'ast syn::ExprAssign) {
-		if let syn::Expr::Path(lhs) = &*node.left {
-			if let Some(segment) = lhs.path.segments.last() {
-				let name = segment.ident.to_string();
-
-				if let Some(id) = self.resolve_symbol(&name) {
-					if Some(id) == self.subject_symbol {
-						self.related_symbols.push(SymReference {
-							name,
-							span: lhs.span().into(),
-							role: SymRole::Reference,
-							resolved_id: Some(id),
-							relation: OwnershipRelation::Assignment,
-						});
-					}
-				}
-			}
+		let syn::Expr::Path(lhs) = &*node.left else {
+			syn::visit::visit_expr_assign(self, node);
+			return;
+		};
+		let Some(segment) = lhs.path.segments.last() else {
+			syn::visit::visit_expr_assign(self, node);
+			return;
+		};
+		let name = segment.ident.to_string();
+		let Some(lhs_id) = self.resolve_symbol(&name) else {
+			syn::visit::visit_expr_assign(self, node);
+			return;
+		};
+		if Some(lhs_id) == self.subject_symbol {
+			self
+				.related_spans
+				.push((lhs.span(), OwnershipRelation::Assignment));
+			self.related_symbols.push(SymReference {
+				name,
+				span: lhs.span().into(),
+				role: SymRole::Reference,
+				resolved_id: Some(lhs_id),
+				relation: OwnershipRelation::Assignment,
+			});
 		}
 
-		// Important: don't walk the LHS again.
-		self.visit_expr(&node.right);
+		syn::visit::visit_expr_assign(self, node);
 	}
 	fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
 		let span = node.span();
@@ -2309,18 +2339,26 @@ mod tests {
 	}
 	"#;
 
-		let related = analyze_click_on(source, "num1", Occurrence::First);
+		let lines = analyze_click_on(source, "num1", Occurrence::First);
 
-		assert_line(&related, 7, OwnershipRelation::Declaration);
-		assert_line(&related, 10, OwnershipRelation::Reference);
+		for line in &lines {
+			if !line.relations.is_empty() {
+				println!("FINAL {} => {:?}", line.line, line.relations);
+			}
+		}
 
+		assert_line(&lines, 7, OwnershipRelation::Declaration);
+		assert_line(&lines, 10, OwnershipRelation::Reference);
+
+		let num2 = lines.iter().find(|x| x.line == 8).unwrap();
 		assert!(
-			!related.iter().any(|x| x.line == 8),
+			num2.relations.is_empty(),
 			"num2 declaration should not be related"
 		);
 
+		let spam2 = lines.iter().find(|x| x.line == 11).unwrap();
 		assert!(
-			!related.iter().any(|x| x.line == 11),
+			spam2.relations.is_empty(),
 			"spam2 usage should not be related"
 		);
 	}
@@ -2368,6 +2406,11 @@ mod tests {
 	"#;
 
 		let related = analyze_click_on(source, "value", Occurrence::First);
+		for line in &related {
+			if !line.relations.is_empty() {
+				println!("FINAL {} => {:?}", line.line, line.relations);
+			}
+		}
 
 		assert_line(&related, 3, OwnershipRelation::Declaration);
 		assert_line(&related, 4, OwnershipRelation::Assignment);
