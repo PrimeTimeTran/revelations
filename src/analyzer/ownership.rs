@@ -1,45 +1,33 @@
 impl Workspace {
-	fn find_parent_node(nodes: &[AstNode], line: usize) -> Option<NodeContext> {
-		todo!("")
-	}
-	fn node_to_context(nodes: &AstNode) -> Option<NodeContext> {
-		todo!("")
-	}
-	fn find_node_at(nodes: &[AstNode], line: usize, column: usize) -> Option<&AstNode> {
-		todo!("")
-	}
 	fn find_node_on_line(nodes: &[AstNode], line: usize) -> Option<&AstNode> {
 		nodes
 			.iter()
 			.filter(|node| node.start_line <= line && line <= node.end_line)
 			.min_by_key(|node| node.end_line - node.start_line)
 	}
-	fn resolve_node(
-		syntax_tree: &syn::File,
-		options: &AnalyzerOptions,
-	) -> Result<NodeContext, AnalysisError> {
-		let line = options
-			.line
-			.ok_or_else(|| AnalysisError::Parse("Missing line".into()))?;
-
-		let column = options
-			.column
-			.ok_or_else(|| AnalysisError::Parse("Missing column".into()))?;
-
-		let resolver = NodeResolver {
-			next_id: 0,
-			line: line as usize,
-			column: column as usize,
-			current_name: None,
-			position: pos(line as usize, column as usize),
-			candidates: Vec::new(),
-			best: None,
-			nodes: Vec::new(),
-			ancestors: Vec::new(),
-		};
-
-		Ok(resolver.resolve_file(syntax_tree))
-	}
+	// fn resolve_node(
+	// 	syntax_tree: &syn::File,
+	// 	options: &AnalyzerOptions,
+	// ) -> Result<NodeContext, AnalysisError> {
+	// 	let line = options
+	// 		.line
+	// 		.ok_or_else(|| AnalysisError::Parse("Missing line".into()))?;
+	// 	let column = options
+	// 		.column
+	// 		.ok_or_else(|| AnalysisError::Parse("Missing column".into()))?;
+	// 	let resolver = NodeResolver {
+	// 		next_id: 0,
+	// 		line: line as usize,
+	// 		column: column as usize,
+	// 		current_name: None,
+	// 		position: pos(line as usize, column as usize),
+	// 		candidates: Vec::new(),
+	// 		best: None,
+	// 		nodes: Vec::new(),
+	// 		ancestors: Vec::new(),
+	// 	};
+	// 	Ok(resolver.resolve_file(syntax_tree))
+	// }
 	fn resolve_node_context(syntax_tree: &syn::File, line: usize, column: usize) -> NodeContext {
 		let mut resolver = NodeResolver {
 			next_id: 0,
@@ -94,27 +82,27 @@ impl Workspace {
 			_ => NodeClassification::Unknown,
 		}
 	}
-	fn resolve_subject(
-		options: &AnalyzerOptions,
-		syntax_tree: &File,
-		line: usize,
-		column: usize,
-	) -> Result<NodeContext, AnalysisError> {
-		let mut resolver = NodeResolver {
-			next_id: 0,
-			line,
-			column,
-			current_name: None,
-			position: pos(line, column),
-			candidates: Vec::new(),
-			best: None,
-			nodes: Vec::new(),
-			ancestors: Vec::new(),
-		};
-		resolver.visit_file(&syntax_tree);
-		let node = resolver.resolve();
-		Ok(node)
-	}
+	// fn resolve_subject(
+	// 	options: &AnalyzerOptions,
+	// 	syntax_tree: &File,
+	// 	line: usize,
+	// 	column: usize,
+	// ) -> Result<NodeContext, AnalysisError> {
+	// 	let mut resolver = NodeResolver {
+	// 		next_id: 0,
+	// 		line,
+	// 		column,
+	// 		current_name: None,
+	// 		position: pos(line, column),
+	// 		candidates: Vec::new(),
+	// 		best: None,
+	// 		nodes: Vec::new(),
+	// 		ancestors: Vec::new(),
+	// 	};
+	// 	resolver.visit_file(&syntax_tree);
+	// 	let node = resolver.resolve();
+	// 	Ok(node)
+	// }
 	fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
 		let syntax_tree = syn::parse_file(source).unwrap();
 		let resolver = NodeResolver {
@@ -137,35 +125,28 @@ impl Workspace {
 		};
 		Self::resolve_click(source, line, column)
 	}
-	fn analyze_click(
-		ast: &syn::File,
-		context: ClickContext,
-		symbols: Vec<LineSymbol>,
-	) -> ClickReport {
-		let node_context = Some(Self::resolve_node_context(
-			ast,
-			context.line,
-			context.column,
-		));
-
-		ClickReport {
-			context,
-			symbols,
-			node_context,
-		}
-	}
+	// fn analyze_click(
+	// 	ast: &syn::File,
+	// 	context: ClickContext,
+	// 	symbols: Vec<LineSymbol>,
+	// ) -> ClickReport {
+	// 	let node_context = Some(Self::resolve_node_context(
+	// 		ast,
+	// 		context.line,
+	// 		context.column,
+	// 	));
+	// 	ClickReport {
+	// 		context,
+	// 		symbols,
+	// 		node_context,
+	// 	}
+	// }
 	fn parse_file(file_path: &PathBuf) -> Result<(String, syn::File), AnalysisError> {
 		let source =
 			std::fs::read_to_string(file_path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
-		// eprintln!("PARSING: {:?}", file_path);
-		// eprintln!("SOURCE LENGTH: {}", source.len());
 		match syn::parse_file(&source) {
 			Ok(tree) => Ok((source, tree)),
-			Err(e) => {
-				// eprintln!("SYN ERROR: {}", e);
-				// eprintln!("SOURCE:\n{}", source);
-				Err(AnalysisError::Parse(e.to_string()))
-			}
+			Err(e) => Err(AnalysisError::Parse(e.to_string())),
 		}
 	}
 	fn add_relation(
@@ -186,51 +167,61 @@ impl Workspace {
 			relations: vec![relation],
 		});
 	}
-	fn find_scope_at_position(
-		syntax_tree: &syn::File,
-		options: &AnalyzerOptions,
-	) -> Option<proc_macro2::Span> {
-		let mut visitor = ScopeVisitor {
-			target_line: options.line.unwrap_or(0),
-			target_column: options.column.unwrap_or(0),
-			scopes: Vec::new(),
-		};
-		visitor.visit_file(syntax_tree);
-		// Return the smallest scope containing the cursor
-		visitor.scopes.into_iter().min_by_key(|span| {
-			let size = span.end().line - span.start().line;
-			size
-		})
-	}
-	fn is_value_flow(relation: &OwnershipRelation) -> bool {
-		matches!(
-			relation,
-			OwnershipRelation::Reference
-				| OwnershipRelation::Assignment
-				| OwnershipRelation::Argument
-				| OwnershipRelation::Return
-				| OwnershipRelation::Mutation
-				| OwnershipRelation::MoveOwnership
-		)
-	}
-	fn build_upstream(graph: &Graph, subject: &ResolvedNode) {
-		let subject_id = subject.id;
+	// fn find_scope_at_position(
+	// 	syntax_tree: &syn::File,
+	// 	options: &AnalyzerOptions,
+	// ) -> Option<proc_macro2::Span> {
+	// 	let mut visitor = ScopeVisitor {
+	// 		target_line: options.line.unwrap_or(0),
+	// 		target_column: options.column.unwrap_or(0),
+	// 		scopes: Vec::new(),
+	// 	};
+	// 	visitor.visit_file(syntax_tree);
+	// 	// Return the smallest scope containing the cursor
+	// 	visitor.scopes.into_iter().min_by_key(|span| {
+	// 		let size = span.end().line - span.start().line;
+	// 		size
+	// 	})
+	// }
+	// fn is_value_flow(relation: &OwnershipRelation) -> bool {
+	// 	matches!(
+	// 		relation,
+	// 		OwnershipRelation::Reference
+	// 			| OwnershipRelation::Assignment
+	// 			| OwnershipRelation::Argument
+	// 			| OwnershipRelation::Return
+	// 			| OwnershipRelation::Mutation
+	// 			| OwnershipRelation::MoveOwnership
+	// 	)
+	// }
+	// fn build_upstream(graph: &Graph, subject: &ResolvedNode) {
+	// 	let subject_id = subject.id;
 
-		for edge in graph.edges_to(subject_id) {
-			println!(
-				"UPSTREAM: {:?} -> {:?} ({:?})",
-				edge.from, edge.to, edge.relation
-			);
-		}
-	}
-	fn build_downstream(graph: &Graph, subject: &ResolvedNode) -> HashSet<NodeId> {
+	// 	for edge in graph.edges_to(subject_id) {
+	// 		println!(
+	// 			"UPSTREAM: {:?} -> {:?} ({:?})",
+	// 			edge.from, edge.to, edge.relation
+	// 		);
+	// 	}
+	// }
+	fn build_downstream(graph: &Graph, subject: &NodeId) -> HashSet<NodeId> {
 		let mut related = HashSet::new();
-		let mut stack = vec![subject.id];
+		let mut stack = vec![subject];
 
 		while let Some(current) = stack.pop() {
-			for edge in graph.edges_from(current) {
-				if related.insert(edge.to) {
-					stack.push(edge.to);
+			for edge in graph.edges_from(&current) {
+				if edge.influence != InfluenceKind::Direct {
+					continue;
+				}
+
+				match edge.relation {
+					RelationKind::Downstream => {
+						if related.insert(edge.to) {
+							stack.push(&edge.to);
+						}
+					}
+
+					_ => {}
 				}
 			}
 		}
@@ -253,8 +244,6 @@ impl Workspace {
 			// should already have been created by the visitor when the
 			// AST gave us enough context.
 		}
-
-		println!("===== GRAPH EDGES =====");
 		for edge in &graph.edges {
 			println!(
 				"{:?} -> {:?} ({:?}, {:?})",
@@ -262,39 +251,32 @@ impl Workspace {
 			);
 		}
 	}
-
 	fn build_graph(
 		tree: &syn::File,
 		options: &AnalyzerOptions,
 		subject: &ResolvedNode,
 	) -> OwnershipGraph {
 		let mut graph = Graph::new();
-
-		let (symbols, subject_id) = {
+		let (symbols, subject_id, related_spans) = {
 			let mut visitor = OwnershipVisitor::new(
 				subject.clone(),
 				subject.name.clone(),
 				options.clone(),
 				&mut graph,
 			);
-
 			visitor.visit_file(tree);
-
-			(visitor.related_symbols.clone(), visitor.subject_symbol)
+			(
+				visitor.related_symbols.clone(),
+				visitor.subject_symbol,
+				visitor.related_spans.clone(),
+			)
 		};
-
 		OwnershipGraph {
 			graph,
 			symbols,
 			subject_id,
+			related_spans,
 		}
-	}
-	pub fn analyze_ownership_on_click(
-		file_path: &PathBuf,
-		options: &AnalyzerOptions,
-	) -> Result<AnalysisReport, AnalysisError> {
-		let (source, syntax_tree) = Self::parse_file(file_path)?;
-		Self::analyze_ownership(file_path, &source, &syntax_tree, options)
 	}
 	fn analyze_ownership(
 		file_path: &PathBuf,
@@ -303,54 +285,44 @@ impl Workspace {
 		options: &AnalyzerOptions,
 	) -> Result<AnalysisReport, AnalysisError> {
 		let click = ClickContext::new(file_path, source, options);
-
 		let mut cfg = AnalyzeConfig::new(Some(file_path), options);
 		let log = Log::new(options, &mut cfg);
 		log.cfg.set_level("1");
-
-		// ─────────────────────────────────────
-		// 1. Resolve the click
-		// ─────────────────────────────────────
-		let context = Self::resolve_node_context(syntax_tree, click.line, click.column);
-
-		let subject = context
+		let ctx = Self::resolve_node_context(syntax_tree, click.line, click.column);
+		let subject = ctx
 			.subject
 			.as_ref()
 			.ok_or_else(|| AnalysisError::Parse("No subject node found".into()))?;
-
-		// ─────────────────────────────────────
-		// 2. Classify the clicked node
-		// ─────────────────────────────────────
-		let classification = Self::classify_node(&context);
-
+		let classification = Self::classify_node(&ctx);
 		log.print("Subject", Vals::new().subject(subject));
-
 		log.print(
 			"Classification",
 			Vals::new().classification(&classification),
 		);
-
-		for ancestor in &context.ancestors {
+		for ancestor in &ctx.ancestors {
 			log.print("Ancestors", Vals::new().ancestors(&ancestor.kind));
 		}
-
-		// ─────────────────────────────────────
-		// 3. Build semantic graph
-		// ─────────────────────────────────────
 		let ownership = Self::build_graph(syntax_tree, options, subject);
 
+		let lines = Self::stage_build_line_analysis(&ownership, file_path, source);
 		let lines = Self::stage_build_related_lines_from_subject(&ownership, file_path, subject);
+		Self::stage_report(ctx, click, lines, classification)
+	}
 
-		Self::stage_report(context, click, lines, classification)
+	pub fn analyze_ownership_on_click(
+		file_path: &PathBuf,
+		options: &AnalyzerOptions,
+	) -> Result<AnalysisReport, AnalysisError> {
+		let (source, syntax_tree) = Self::parse_file(file_path)?;
+		Self::analyze_ownership(file_path, &source, &syntax_tree, options)
 	}
 	pub fn stage_build_line_analysis(
-		visitor: &OwnershipVisitor,
+		ownership: &OwnershipGraph,
 		file_path: &PathBuf,
 		source: &str,
 	) -> Vec<LineRelated> {
 		let line_count = source.lines().count();
 
-		// Start with EVERY line in the source.
 		let mut lines: Vec<LineRelated> = (1..=line_count)
 			.map(|line| LineRelated {
 				line,
@@ -359,7 +331,6 @@ impl Workspace {
 			})
 			.collect();
 
-		// Helper for adding a relationship to a line.
 		let mut add = |line: usize, relation: OwnershipRelation| {
 			if let Some(entry) = lines.get_mut(line.saturating_sub(1)) {
 				if !entry.relations.contains(&relation) {
@@ -368,14 +339,12 @@ impl Workspace {
 			}
 		};
 
-		// Existing reference spans.
-		for span in &visitor.related_spans {
+		for span in &ownership.related_spans {
 			add(span.start().line, OwnershipRelation::Reference);
 		}
 
-		// Existing resolved symbols.
-		for symbol in &visitor.related_symbols {
-			if symbol.resolved_id != visitor.subject_symbol {
+		for symbol in &ownership.symbols {
+			if symbol.resolved_id != ownership.subject_id {
 				continue;
 			}
 
@@ -391,30 +360,52 @@ impl Workspace {
 				_ => {}
 			}
 		}
-
 		lines
 	}
 	pub fn stage_build_related_lines_from_subject(
 		ownership: &OwnershipGraph,
 		file_path: &PathBuf,
-		subject: &ResolvedNode,
+		_subject: &ResolvedNode,
 	) -> Vec<LineRelated> {
 		let mut related_lines = Vec::new();
-		let subject_id = ownership.subject_id;
-		let downstream = Self::build_downstream(&ownership.graph, subject);
+
+		let downstream = Self::build_downstream(&ownership.graph, &ownership.subject_id.unwrap());
+
 		for symbol in &ownership.symbols {
-			let id = symbol.resolved_id;
-			let is_subject = id == subject_id;
-			let is_downstream = id.is_some_and(|id| downstream.contains(&id));
+			let Some(id) = symbol.resolved_id else {
+				continue;
+			};
+
+			let is_subject = Some(id) == ownership.subject_id;
+			let is_downstream = downstream.contains(&id);
+
 			if !is_subject && !is_downstream {
 				continue;
 			}
+
+			// The symbol itself still has its normal relationship.
 			Self::add_relation(
 				&mut related_lines,
 				symbol.span.start().line,
 				file_path,
 				symbol.relation.clone(),
 			);
+
+			// Overlay semantic relationships carried by graph edges.
+			for edge in &ownership.graph.edges {
+				if edge.to != id {
+					continue;
+				}
+
+				if let Some(relation) = &edge.ownership {
+					Self::add_relation(
+						&mut related_lines,
+						symbol.span.start().line,
+						file_path,
+						relation.clone(),
+					);
+				}
+			}
 		}
 
 		related_lines
@@ -451,55 +442,12 @@ impl Workspace {
 		let json_output = serde_json::to_string(&report)?;
 		Ok(report)
 	}
-	fn collect_lines(source: &str, scope: &ScopeInfo) -> Vec<LineAnalysis> {
-		todo!("collect_lines")
-	}
-	fn analyze_relationships(
-		subject: &ResolvedSubject,
-		symbols: &[SymReference],
-	) -> Vec<SymRelation> {
-		todo!("analyze_relationships")
-	}
-	fn classify_lines(
-		lines: &mut [LineAnalysis],
-		subject: &ResolvedSubject,
-		relations: &[SymRelation],
-	) {
-		todo!("classify_lines")
-	}
-	fn run_checks(&self, ast: &syn::File) {
-		todo!("run_checks")
-	}
-	fn collect_symbols(&self, ast: &syn::File) {
-		todo!("collect_symbols")
-	}
-	fn build_indexes(&self, node: &syn::File) {
-		todo!("build_indexes")
-	}
-	fn analyze(&self, ast: &syn::File, context: ClickContext) {
-		todo!("analyze");
-		// let symbols = self.collect_symbols(ast);
-		// self.run_checks(ast);
-		// self.build_indexes(ast);
-		// let report = Self::analyze_click(
-		//     ast,
-		//     context,
-		//     symbols,
-		// );
-		// Self::print_click_report(&report);
-		// later:
-		// send_to_client(report);
-	}
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymRelation {
-	/// Source symbol
 	pub from: SymId,
-	/// Target symbol
 	pub to: SymId,
-	/// Relationship between them
 	pub kind: RelationKind,
-	/// Optional explanation for debugging/UI
 	pub label: Option<String>,
 }
 #[derive(Debug, Clone)]
@@ -1313,6 +1261,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 				function_id,
 				RelationKind::Downstream,
 				InfluenceKind::Direct,
+				Some(OwnershipRelation::Argument),
 			);
 
 			if Some(source_id) == self.subject_symbol {
@@ -1387,19 +1336,19 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 						"RETURN FLOW {:?}({:?}) -> {}({})",
 						call.func, function_id, name, id
 					);
-
 					self.graph.add_relation(
 						function_id,
 						id,
 						RelationKind::Downstream,
 						InfluenceKind::Direct,
+						Some(OwnershipRelation::Argument),
 					);
 
 					// If the subject flows into this call, the result is
 					// also downstream of the subject.
 					if self
 						.graph
-						.edges_from(self.subject_symbol.unwrap_or(NodeId::MAX))
+						.edges_from(&self.subject_symbol.unwrap_or(NodeId::MAX))
 						.iter()
 						.any(|edge| edge.to == function_id)
 					{
@@ -1772,7 +1721,7 @@ pub type NodeId = usize;
 #[derive(Clone, Debug)]
 pub struct Graph {
 	pub nodes: Vec<GraphNode>,
-	pub edges: Vec<GraphEdge>,
+	pub edges: Vec<Edge>,
 }
 impl Graph {
 	pub fn new() -> Self {
@@ -1794,20 +1743,22 @@ impl Graph {
 		to: NodeId,
 		relation: RelationKind,
 		influence: InfluenceKind,
+		ownership: Option<OwnershipRelation>,
 	) {
-		self.edges.push(GraphEdge {
+		self.edges.push(Edge {
 			from,
 			to,
 			relation,
 			influence,
+			ownership,
 		});
 	}
 
-	pub fn edges_from(&self, node: NodeId) -> Vec<&GraphEdge> {
-		self.edges.iter().filter(|edge| edge.from == node).collect()
+	pub fn edges_from(&self, node: &NodeId) -> Vec<&Edge> {
+		self.edges.iter().filter(|edge| &edge.from == node).collect()
 	}
 
-	pub fn edges_to(&self, node: NodeId) -> Vec<&GraphEdge> {
+	pub fn edges_to(&self, node: NodeId) -> Vec<&Edge> {
 		self.edges.iter().filter(|edge| edge.to == node).collect()
 	}
 
@@ -1834,12 +1785,20 @@ pub struct GraphNode {
 	pub span: proc_macro2::Span,
 }
 #[derive(Clone, Debug)]
-pub struct GraphEdge {
+pub struct Edge {
 	pub from: NodeId,
 	pub to: NodeId,
 	pub relation: RelationKind,
 	pub influence: InfluenceKind,
+	pub ownership: Option<OwnershipRelation>,
 }
+// #[derive(Clone, Debug)]
+// pub struct GraphEdge {
+// 	pub from: NodeId,
+// 	pub to: NodeId,
+// 	pub relation: RelationKind,
+// 	pub influence: InfluenceKind,
+// }
 pub struct ScopeKind;
 pub struct ScopeContext {
 	pub kind: ScopeKind,
@@ -1883,7 +1842,7 @@ pub enum RelationKind {
 	PassedAsArgument,
 	ReturnedFrom,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub enum InfluenceKind {
 	Direct,
 	Declaration,
@@ -2896,9 +2855,9 @@ mod tests {
 		);
 	}
 }
-
 pub struct OwnershipGraph {
 	pub graph: Graph,
 	pub symbols: Vec<SymReference>,
-	pub subject_id: Option<usize>,
+	pub subject_id: Option<NodeId>,
+	pub related_spans: Vec<Span>,
 }
