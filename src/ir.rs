@@ -1,4 +1,4 @@
-use crate::_scope::{self, ScopeId};
+use crate::_scope::ScopeId;
 
 pub type SymId = u32;
 // #[derive(Debug, Clone)]

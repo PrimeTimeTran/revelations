@@ -1,10 +1,9 @@
 // https://doc.rust-lang.org/rustc/lints/levels.html
-// Prevent warnings
-// #![allow(warnings)]
-// #![allow(dead_code)]
+// #![allow(warnings)] // Silences all warnings
+// #![allow(unused_imports)] // Silences unused imports
 
+// #![allow(dead_code)]
 // #![allow(unused_must_use)]
-// #![allow(unused_imports)]
 // #![allow(unused_variables)]
 
 // Add warnings
@@ -12,10 +11,10 @@
 // #![warn(unused_mut)]
 // #![warn(unused_parens)]
 // #![warn(unused_braces)]
+// #![warn(unused_must_use)]
+// #![warn(unused_assignments)]
 // #![warn(unused_imports)]
 // #![warn(unused_variables)]
-// #![warn(unused_assignments)]
-// #![warn(unused_must_use)]
 
 pub mod _config;
 pub mod _scope;

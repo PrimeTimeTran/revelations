@@ -14,6 +14,7 @@ use syn::{
 	visit::{self, Visit},
 	visit_mut::{self, VisitMut},
 };
+
 ///--------------------------------------------------------------------------------
 ///      Pipelines:
 ///      - Estate(namespace definition): Are we in a workspace and how many packages do we have?
@@ -549,22 +550,6 @@ impl RustAnalyzer {
 //     Ok(ParsedSubject { identifier, kind })
 // }
 
-#[derive(Debug)]
-pub enum NodeKind {
-	Statement,
-	Expression,
-	Identifier,
-	Local,
-	PatternIdentifier,
-	Unknown,
-}
-
-// fn classify_node_at_offset(source: &str, offset: usize) -> NodeKind {
-//     // Inspect surrounding syntax (e.g., trailing semicolons for statements,
-//     // operator context for expressions, etc.)
-//     NodeKind::Expression // stub for your AST check
-// }
-
 // Building up the Estate
 // pub struct EstateDiscovery {
 //     pub active: PathBuf,
@@ -616,14 +601,6 @@ pub enum NodeKind {
 //         todo!()
 //     }
 // };
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum NodeContext {
-	Expression,
-	Statement,
-	Identifier,
-	Unknown,
-}
 pub fn resolve_node_at_position(
 	syntax_tree: &syn::File,
 	source: &str,
@@ -648,6 +625,13 @@ pub fn resolve_node_at_position(
 		target: usize,
 		found_ident: Option<String>,
 		found_context: NodeContext,
+	}
+
+	enum NodeContext {
+		Identifier,
+		Statement,
+		Expression,
+		Unknown,
 	}
 
 	impl<'ast> Visit<'ast> for OffsetFinder {
@@ -739,4 +723,11 @@ pub enum SymbolKindOutline {
 
 	Operator = 25,
 	TypeParameter = 26,
+}
+
+pub enum NodeContext {
+	Identifier,
+	Statement,
+	Expression,
+	Unknown,
 }

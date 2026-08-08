@@ -8,10 +8,7 @@ use crate::{
 	writer::{MarkdownWriter, OutputWriter},
 };
 use std::collections::HashMap;
-use std::{
-	fs,
-	path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 pub struct AstContext {}
 pub struct Evaluator {
 	config: Config,

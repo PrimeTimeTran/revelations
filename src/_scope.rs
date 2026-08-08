@@ -1,4 +1,4 @@
-use crate::{_semantic::*, analyzer::*, ir::*};
+use crate::ir::*;
 use std::{collections::HashMap, path::PathBuf};
 use syn::{Ident, Result, Token, visit::Visit};
 
