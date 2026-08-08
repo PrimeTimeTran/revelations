@@ -5,29 +5,6 @@ impl Workspace {
 			.filter(|node| node.start_line <= line && line <= node.end_line)
 			.min_by_key(|node| node.end_line - node.start_line)
 	}
-	// fn resolve_node(
-	// 	syntax_tree: &syn::File,
-	// 	options: &AnalyzerOptions,
-	// ) -> Result<NodeContext, AnalysisError> {
-	// 	let line = options
-	// 		.line
-	// 		.ok_or_else(|| AnalysisError::Parse("Missing line".into()))?;
-	// 	let column = options
-	// 		.column
-	// 		.ok_or_else(|| AnalysisError::Parse("Missing column".into()))?;
-	// 	let resolver = NodeResolver {
-	// 		next_id: 0,
-	// 		line: line as usize,
-	// 		column: column as usize,
-	// 		current_name: None,
-	// 		position: pos(line as usize, column as usize),
-	// 		candidates: Vec::new(),
-	// 		best: None,
-	// 		nodes: Vec::new(),
-	// 		ancestors: Vec::new(),
-	// 	};
-	// 	Ok(resolver.resolve_file(syntax_tree))
-	// }
 	fn resolve_node_context(syntax_tree: &syn::File, line: usize, column: usize) -> NodeContext {
 		let mut resolver = NodeResolver {
 			next_id: 0,
@@ -82,27 +59,6 @@ impl Workspace {
 			_ => NodeClassification::Unknown,
 		}
 	}
-	// fn resolve_subject(
-	// 	options: &AnalyzerOptions,
-	// 	syntax_tree: &File,
-	// 	line: usize,
-	// 	column: usize,
-	// ) -> Result<NodeContext, AnalysisError> {
-	// 	let mut resolver = NodeResolver {
-	// 		next_id: 0,
-	// 		line,
-	// 		column,
-	// 		current_name: None,
-	// 		position: pos(line, column),
-	// 		candidates: Vec::new(),
-	// 		best: None,
-	// 		nodes: Vec::new(),
-	// 		ancestors: Vec::new(),
-	// 	};
-	// 	resolver.visit_file(&syntax_tree);
-	// 	let node = resolver.resolve();
-	// 	Ok(node)
-	// }
 	fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
 		let syntax_tree = syn::parse_file(source).unwrap();
 		let resolver = NodeResolver {
@@ -125,22 +81,6 @@ impl Workspace {
 		};
 		Self::resolve_click(source, line, column)
 	}
-	// fn analyze_click(
-	// 	ast: &syn::File,
-	// 	context: ClickContext,
-	// 	symbols: Vec<LineSymbol>,
-	// ) -> ClickReport {
-	// 	let node_context = Some(Self::resolve_node_context(
-	// 		ast,
-	// 		context.line,
-	// 		context.column,
-	// 	));
-	// 	ClickReport {
-	// 		context,
-	// 		symbols,
-	// 		node_context,
-	// 	}
-	// }
 	fn parse_file(file_path: &PathBuf) -> Result<(String, syn::File), AnalysisError> {
 		let source =
 			std::fs::read_to_string(file_path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
@@ -167,53 +107,14 @@ impl Workspace {
 			relations: vec![relation],
 		});
 	}
-	// fn find_scope_at_position(
-	// 	syntax_tree: &syn::File,
-	// 	options: &AnalyzerOptions,
-	// ) -> Option<proc_macro2::Span> {
-	// 	let mut visitor = ScopeVisitor {
-	// 		target_line: options.line.unwrap_or(0),
-	// 		target_column: options.column.unwrap_or(0),
-	// 		scopes: Vec::new(),
-	// 	};
-	// 	visitor.visit_file(syntax_tree);
-	// 	// Return the smallest scope containing the cursor
-	// 	visitor.scopes.into_iter().min_by_key(|span| {
-	// 		let size = span.end().line - span.start().line;
-	// 		size
-	// 	})
-	// }
-	// fn is_value_flow(relation: &OwnershipRelation) -> bool {
-	// 	matches!(
-	// 		relation,
-	// 		OwnershipRelation::Reference
-	// 			| OwnershipRelation::Assignment
-	// 			| OwnershipRelation::Argument
-	// 			| OwnershipRelation::Return
-	// 			| OwnershipRelation::Mutation
-	// 			| OwnershipRelation::MoveOwnership
-	// 	)
-	// }
-	// fn build_upstream(graph: &Graph, subject: &ResolvedNode) {
-	// 	let subject_id = subject.id;
-
-	// 	for edge in graph.edges_to(subject_id) {
-	// 		println!(
-	// 			"UPSTREAM: {:?} -> {:?} ({:?})",
-	// 			edge.from, edge.to, edge.relation
-	// 		);
-	// 	}
-	// }
 	fn build_downstream(graph: &Graph, subject: &NodeId) -> HashSet<NodeId> {
 		let mut related = HashSet::new();
 		let mut stack = vec![subject];
-
 		while let Some(current) = stack.pop() {
 			for edge in graph.edges_from(&current) {
 				if edge.influence != InfluenceKind::Direct {
 					continue;
 				}
-
 				match edge.relation {
 					RelationKind::Downstream => {
 						if related.insert(edge.to) {
@@ -225,7 +126,6 @@ impl Workspace {
 				}
 			}
 		}
-
 		related
 	}
 	fn build_direct_relationships(graph: &mut Graph, symbols: &[SymReference]) {
@@ -304,11 +204,15 @@ impl Workspace {
 		}
 		let ownership = Self::build_graph(syntax_tree, options, subject);
 
-		let lines = Self::stage_build_line_analysis(&ownership, file_path, source);
+		// let lines = Self::stage_build_line_analysis(&ownership, file_path, source);
 		let lines = Self::stage_build_related_lines_from_subject(&ownership, file_path, subject);
+		for line in &lines {
+			if !line.relations.is_empty() {
+				println!("RELATED LINE {} => {:?}", line.line, line.relations);
+			}
+		}
 		Self::stage_report(ctx, click, lines, classification)
 	}
-
 	pub fn analyze_ownership_on_click(
 		file_path: &PathBuf,
 		options: &AnalyzerOptions,
@@ -339,27 +243,32 @@ impl Workspace {
 			}
 		};
 
+		let Some(subject_id) = ownership.subject_id else {
+			return lines;
+		};
+		let downstream = Self::build_downstream(&ownership.graph, &subject_id);
 		for (span, relation) in &ownership.related_spans {
 			add(span.start().line, relation.clone());
 		}
-
 		for symbol in &ownership.symbols {
-			if symbol.resolved_id != ownership.subject_id {
+			let Some(id) = symbol.resolved_id else {
+				continue;
+			};
+			if id != subject_id && !downstream.contains(&id) {
 				continue;
 			}
-
 			match symbol.role {
-				SymRole::Declaration => {
-					add(symbol.span.start().line, OwnershipRelation::Declaration);
-				}
-
 				SymRole::Reference => {
-					add(symbol.span.start().line, OwnershipRelation::Reference);
+					add(symbol.span.start().line, symbol.relation.clone());
+				}
+				SymRole::Declaration => {
+					// Deliberately don't add declarations here.
 				}
 
 				_ => {}
 			}
 		}
+
 		lines
 	}
 	pub fn stage_build_related_lines_from_subject(
@@ -369,7 +278,10 @@ impl Workspace {
 	) -> Vec<LineRelated> {
 		let mut related_lines = Vec::new();
 
-		let subject_id = ownership.subject_id.unwrap();
+		let Some(subject_id) = ownership.subject_id else {
+			return related_lines;
+		};
+
 		let downstream = Self::build_downstream(&ownership.graph, &subject_id);
 
 		for symbol in &ownership.symbols {
@@ -384,35 +296,12 @@ impl Workspace {
 				continue;
 			}
 
-			// Always keep the symbol's own relationship.
 			Self::add_relation(
 				&mut related_lines,
 				symbol.span.start().line,
 				file_path,
 				symbol.relation.clone(),
 			);
-
-			// A symbol can have MORE than one relationship.
-			// For example:
-			//
-			//     spam1 = foo(num1)
-			//
-			// spam1 is Declaration + Return.
-			//
-			for edge in &ownership.graph.edges {
-				if edge.to != id {
-					continue;
-				}
-
-				if let Some(relation) = &edge.ownership {
-					Self::add_relation(
-						&mut related_lines,
-						symbol.span.start().line,
-						file_path,
-						relation.clone(),
-					);
-				}
-			}
 		}
 
 		related_lines
@@ -423,14 +312,6 @@ impl Workspace {
 		related_lines: Vec<LineRelated>,
 		classification: NodeClassification,
 	) -> Result<AnalysisReport, AnalysisError> {
-		let analysis = related_lines.clone();
-		let analysis = AnalysisData {
-			related_lines: analysis,
-			node_context: ctx.clone(),
-			classification: classification,
-			symbols: Vec::new(),
-		};
-		let formatted_output = build_final_analysis(&click, Some(&related_lines));
 		// let mut stdout = io::stdout();
 		// stdout
 		//     .write_all(json_output.as_bytes())
@@ -441,6 +322,15 @@ impl Workspace {
 		// stdout
 		//     .flush()
 		//     .map_err(|e| AnalysisError::IoError(e.to_string()))?;
+		let analysis = related_lines.clone();
+		let analysis = AnalysisData {
+			related_lines: analysis,
+			node_context: ctx.clone(),
+			classification: classification,
+			symbols: Vec::new(),
+		};
+		let formatted_output = build_final_analysis(&click, Some(&related_lines));
+
 		let report = AnalysisReport {
 			click,
 			analysis,
@@ -1257,28 +1147,10 @@ impl<'a> OwnershipVisitor<'a> {
 	}
 	fn get_or_create_call_id(&mut self, call: &syn::ExprCall) -> NodeId {
 		let key = (call.span().start().line, call.span().start().column);
-
 		if let Some(&id) = self.call_ids.get(&key) {
 			return id;
 		}
-
 		let id = self.define_symbol(format!("<call:{}:{}>", key.0, key.1));
-
-		self.call_ids.insert(key, id);
-		id
-	}
-
-	fn call_id_for3(&self, call: &syn::ExprCall) -> Option<NodeId> {
-		let start = call.span().start();
-		self.call_ids.get(&(start.line, start.column)).copied()
-	}
-	fn call_id_for2(&mut self, call: &syn::ExprCall) -> NodeId {
-		let start = call.span().start();
-		let key = (start.line, start.column);
-		if let Some(&id) = self.call_ids.get(&key) {
-			return id;
-		}
-		let id = self.next_node_id();
 		self.call_ids.insert(key, id);
 		id
 	}
@@ -1670,9 +1542,6 @@ fn pos(line: usize, column: usize) -> SourcePosition {
 		column: column as u32,
 	}
 }
-fn resolve_scope(node_context: &NodeContext) -> Option<ScopeContext> {
-	todo!("h")
-}
 fn build_final_analysis(context: &ClickContext, lines: Option<&[LineRelated]>) -> String {
 	let mut output = String::new();
 
@@ -1683,16 +1552,14 @@ fn build_final_analysis(context: &ClickContext, lines: Option<&[LineRelated]>) -
 	let _ = writeln!(output);
 	let _ = writeln!(output, "SOURCE:");
 
-	let lines = lines.unwrap_or(&[]);
-
 	for (idx, source_line) in context.source.lines().enumerate() {
 		let line_number = idx + 1;
 
 		let relations = lines
-			.get(idx)
+			.and_then(|lines| lines.get(idx))
 			.map(|line| &line.relations)
-			.cloned()
-			.unwrap_or_default();
+			.map(|relations| relations.as_slice())
+			.unwrap_or(&[]);
 
 		let _ = writeln!(
 			output,
@@ -1708,21 +1575,23 @@ fn build_final_analysis(context: &ClickContext, lines: Option<&[LineRelated]>) -
 				"{}{}^ (column {})",
 				" ".repeat(prefix.len()),
 				" ".repeat(context.column as usize),
-				context.column
+				context.column,
 			);
 		}
 	}
 
-	if context.line > context.source.lines().count() {
+	let source_line_count = context.source.lines().count();
+
+	if context.line > source_line_count {
 		let _ = writeln!(output);
 		let _ = writeln!(
 			output,
 			"CLICK POSITION OUT OF RANGE: line {}, column {}",
-			context.line, context.column
+			context.line, context.column,
 		);
 	}
 
-	let _ = writeln!(output,);
+	let _ = writeln!(output);
 
 	output
 }
@@ -1943,144 +1812,7 @@ pub struct SymInfo {
 	pub name: String,     // e.g., "bar"
 	pub defined_at: Span, // Where it was born
 }
-impl Workspace {
-	fn print_click_report(report: &ClickReport) {
-		Self::print_click_analysis(
-			&report.context,
-			&report.symbols,
-			report.node_context.as_ref(),
-		);
-	}
-	fn print_click_analysis(
-		context: &ClickContext,
-		symbols: &[LineSymbol],
-		node_context: Option<&NodeContext>,
-	) {
-		println!("================ CLICK ANALYSIS ================");
-		println!("FILE   : {}", context.file.display());
-		println!("LINE   : {}", context.line);
-		println!("COLUMN : {}", context.column);
-		println!();
-		println!("SOURCE:");
-		for (idx, source_line) in context.source.lines().enumerate() {
-			let line_number = idx + 1;
-			let labels: Vec<_> = symbols
-				.iter()
-				.filter(|s| s.line == line_number)
-				.map(|s| format!("{}:{:?}", s.name, s.role))
-				.collect();
-			match labels.is_empty() {
-				true => {
-					println!("{:>4} | {}", line_number, source_line);
-				}
-				false => {
-					println!(
-						"{:>4} | {:<50} // {}",
-						line_number,
-						source_line,
-						labels.join(", ")
-					);
-				}
-			}
-			if line_number == context.line {
-				println!(
-					"{:>width$}^ column {}",
-					"",
-					context.column,
-					width = context.column as usize + 8
-				);
-			}
-		}
-		// if let Some(node_context) = &report.node_context {
-		//     println!();
-		//     print_node_context(
-		//         node_context,
-		//         LineKind::Cursor,
-		//     );
-		// }
-	}
-	fn roadmap() {
-		// To nail the compiler boundaries for an interactive click-to-analyze tool (like a language server feature), you want to separate **Phase 1: Query Extraction** (point-in-time lookup) from **Phase 2: Whole-File Semantic Mapping** (line-by-line analysis).
 
-		// Since you are working with `syn::File` (standard Rust AST structures), you can implement `collect_lines` by using a **visitor pattern** or a recursive span-matching pass that scans the syntax tree once and projects the AST nodes onto their respective source lines.
-
-		// Here is how you can structure the boundary and implement `collect_lines`:
-
-		// ### 1. The Compiler Pipeline Boundary
-
-		// * **Pipeline A (Targeted Query):** Click coordinates $\rightarrow$ `resolve_node` $\rightarrow$ Find the exact AST node and its path/ancestors. (Fast, localized, bottom-up).
-		// * **Pipeline B (Whole-File Render/Analysis):** Source string + AST $\rightarrow$ `collect_lines` $\rightarrow$ Line-by-line symbol mapping (Top-down AST walk mapping spans to line numbers).
-		// * **Pipeline C (The Link):** Compare Pipeline A's resolved subject against Pipeline B's line symbols to answer "does this line affect my click?"
-
-		// 1. Click
-		//    - file
-		//    - line
-		//    - column
-		//    - cursor position
-		// 2. Find relevant lines
-		//    LineRelated[]
-		//    Example:
-		//    line 2 -> Scope
-		//    line 3 -> Scope
-		//    line 9 -> Scope
-		// 3. Populate symbols inside those lines
-		//    Line 3:
-		//       symbol: bar
-		//       role: Declaration
-		//    Line 9:
-		//       symbol: bar
-		//       role: Reference
-		// 4. Compare symbols against clicked subject
-		//    Subject:
-		//       bar
-		//    Line 3:
-		//       bar declaration
-		//       affects subject: true
-		//    Line 2:
-		//       foo declaration
-		//       affects subject: false
-		//
-		// 5. Add flags
-		//    LineAnalysis {
-		//        line: 3,
-		//        symbols: [
-		//            {
-		//              name: "bar",
-		//              role: "declaration",
-		//              relation_to_subject: "defines"
-		//            }
-		//        ],
-		//        flags: {
-		//            in_scope: true,
-		//            influences_subject: true,
-		//            unrelated: false
-		//        }
-		//    }
-		// 6. Render different views
-		//    Decorations:
-		//       - highlight influence lines
-		//       - grey unrelated lines
-		//    Inlay hints:
-		//       - show symbol roles
-		//    CodeLens:
-		//       - show actions
-		//    Webview:
-		//       - show graph
-		// Click
-		//  |
-		// Resolve AST node
-		//  |
-		// Collect ancestors
-		//  |
-		// Classify node
-		//  |
-		// Build influence edges
-		//  |
-		// Traverse outward
-		//  |
-		// Highlight affected lines
-	}
-}
 enum Occurrence {
 	First,
 	Last,
@@ -2687,4 +2419,239 @@ pub struct OwnershipGraph {
 	pub symbols: Vec<SymReference>,
 	pub subject_id: Option<NodeId>,
 	pub related_spans: Vec<(proc_macro2::Span, OwnershipRelation)>,
+}
+impl Workspace {
+	// fn resolve_subject(
+	// 	options: &AnalyzerOptions,
+	// 	syntax_tree: &File,
+	// 	line: usize,
+	// 	column: usize,
+	// ) -> Result<NodeContext, AnalysisError> {
+	// 	let mut resolver = NodeResolver {
+	// 		next_id: 0,
+	// 		line,
+	// 		column,
+	// 		current_name: None,
+	// 		position: pos(line, column),
+	// 		candidates: Vec::new(),
+	// 		best: None,
+	// 		nodes: Vec::new(),
+	// 		ancestors: Vec::new(),
+	// 	};
+	// 	resolver.visit_file(&syntax_tree);
+	// 	let node = resolver.resolve();
+	// 	Ok(node)
+	// }
+	// fn resolve_node(
+	// 	syntax_tree: &syn::File,
+	// 	options: &AnalyzerOptions,
+	// ) -> Result<NodeContext, AnalysisError> {
+	// 	let line = options
+	// 		.line
+	// 		.ok_or_else(|| AnalysisError::Parse("Missing line".into()))?;
+	// 	let column = options
+	// 		.column
+	// 		.ok_or_else(|| AnalysisError::Parse("Missing column".into()))?;
+	// 	let resolver = NodeResolver {
+	// 		next_id: 0,
+	// 		line: line as usize,
+	// 		column: column as usize,
+	// 		current_name: None,
+	// 		position: pos(line as usize, column as usize),
+	// 		candidates: Vec::new(),
+	// 		best: None,
+	// 		nodes: Vec::new(),
+	// 		ancestors: Vec::new(),
+	// 	};
+	// 	Ok(resolver.resolve_file(syntax_tree))
+	// }
+	fn print_click_report(report: &ClickReport) {
+		Self::print_click_analysis(
+			&report.context,
+			&report.symbols,
+			report.node_context.as_ref(),
+		);
+	}
+	fn print_click_analysis(
+		context: &ClickContext,
+		symbols: &[LineSymbol],
+		node_context: Option<&NodeContext>,
+	) {
+		println!("================ CLICK ANALYSIS ================");
+		println!("FILE   : {}", context.file.display());
+		println!("LINE   : {}", context.line);
+		println!("COLUMN : {}", context.column);
+		println!();
+		println!("SOURCE:");
+		for (idx, source_line) in context.source.lines().enumerate() {
+			let line_number = idx + 1;
+			let labels: Vec<_> = symbols
+				.iter()
+				.filter(|s| s.line == line_number)
+				.map(|s| format!("{}:{:?}", s.name, s.role))
+				.collect();
+			match labels.is_empty() {
+				true => {
+					println!("{:>4} | {}", line_number, source_line);
+				}
+				false => {
+					println!(
+						"{:>4} | {:<50} // {}",
+						line_number,
+						source_line,
+						labels.join(", ")
+					);
+				}
+			}
+			if line_number == context.line {
+				println!(
+					"{:>width$}^ column {}",
+					"",
+					context.column,
+					width = context.column as usize + 8
+				);
+			}
+		}
+		// if let Some(node_context) = &report.node_context {
+		//     println!();
+		//     print_node_context(
+		//         node_context,
+		//         LineKind::Cursor,
+		//     );
+		// }
+	}
+	fn roadmap() {
+		// To nail the compiler boundaries for an interactive click-to-analyze tool (like a language server feature), you want to separate **Phase 1: Query Extraction** (point-in-time lookup) from **Phase 2: Whole-File Semantic Mapping** (line-by-line analysis).
+
+		// Since you are working with `syn::File` (standard Rust AST structures), you can implement `collect_lines` by using a **visitor pattern** or a recursive span-matching pass that scans the syntax tree once and projects the AST nodes onto their respective source lines.
+
+		// Here is how you can structure the boundary and implement `collect_lines`:
+
+		// ### 1. The Compiler Pipeline Boundary
+
+		// * **Pipeline A (Targeted Query):** Click coordinates $\rightarrow$ `resolve_node` $\rightarrow$ Find the exact AST node and its path/ancestors. (Fast, localized, bottom-up).
+		// * **Pipeline B (Whole-File Render/Analysis):** Source string + AST $\rightarrow$ `collect_lines` $\rightarrow$ Line-by-line symbol mapping (Top-down AST walk mapping spans to line numbers).
+		// * **Pipeline C (The Link):** Compare Pipeline A's resolved subject against Pipeline B's line symbols to answer "does this line affect my click?"
+
+		// 1. Click
+		//    - file
+		//    - line
+		//    - column
+		//    - cursor position
+		// 2. Find relevant lines
+		//    LineRelated[]
+		//    Example:
+		//    line 2 -> Scope
+		//    line 3 -> Scope
+		//    line 9 -> Scope
+		// 3. Populate symbols inside those lines
+		//    Line 3:
+		//       symbol: bar
+		//       role: Declaration
+		//    Line 9:
+		//       symbol: bar
+		//       role: Reference
+		// 4. Compare symbols against clicked subject
+		//    Subject:
+		//       bar
+		//    Line 3:
+		//       bar declaration
+		//       affects subject: true
+		//    Line 2:
+		//       foo declaration
+		//       affects subject: false
+		//
+		// 5. Add flags
+		//    LineAnalysis {
+		//        line: 3,
+		//        symbols: [
+		//            {
+		//              name: "bar",
+		//              role: "declaration",
+		//              relation_to_subject: "defines"
+		//            }
+		//        ],
+		//        flags: {
+		//            in_scope: true,
+		//            influences_subject: true,
+		//            unrelated: false
+		//        }
+		//    }
+		// 6. Render different views
+		//    Decorations:
+		//       - highlight influence lines
+		//       - grey unrelated lines
+		//    Inlay hints:
+		//       - show symbol roles
+		//    CodeLens:
+		//       - show actions
+		//    Webview:
+		//       - show graph
+		// Click
+		//  |
+		// Resolve AST node
+		//  |
+		// Collect ancestors
+		//  |
+		// Classify node
+		//  |
+		// Build influence edges
+		//  |
+		// Traverse outward
+		//  |
+		// Highlight affected lines
+	}
+	// fn analyze_click(
+	// 	ast: &syn::File,
+	// 	context: ClickContext,
+	// 	symbols: Vec<LineSymbol>,
+	// ) -> ClickReport {
+	// 	let node_context = Some(Self::resolve_node_context(
+	// 		ast,
+	// 		context.line,
+	// 		context.column,
+	// 	));
+	// 	ClickReport {
+	// 		context,
+	// 		symbols,
+	// 		node_context,
+	// 	}
+	// }
+	// fn find_scope_at_position(
+	// 	syntax_tree: &syn::File,
+	// 	options: &AnalyzerOptions,
+	// ) -> Option<proc_macro2::Span> {
+	// 	let mut visitor = ScopeVisitor {
+	// 		target_line: options.line.unwrap_or(0),
+	// 		target_column: options.column.unwrap_or(0),
+	// 		scopes: Vec::new(),
+	// 	};
+	// 	visitor.visit_file(syntax_tree);
+	// 	// Return the smallest scope containing the cursor
+	// 	visitor.scopes.into_iter().min_by_key(|span| {
+	// 		let size = span.end().line - span.start().line;
+	// 		size
+	// 	})
+	// }
+	// fn is_value_flow(relation: &OwnershipRelation) -> bool {
+	// 	matches!(
+	// 		relation,
+	// 		OwnershipRelation::Reference
+	// 			| OwnershipRelation::Assignment
+	// 			| OwnershipRelation::Argument
+	// 			| OwnershipRelation::Return
+	// 			| OwnershipRelation::Mutation
+	// 			| OwnershipRelation::MoveOwnership
+	// 	)
+	// }
+	// fn build_upstream(graph: &Graph, subject: &ResolvedNode) {
+	// 	let subject_id = subject.id;
+
+	// 	for edge in graph.edges_to(subject_id) {
+	// 		println!(
+	// 			"UPSTREAM: {:?} -> {:?} ({:?})",
+	// 			edge.from, edge.to, edge.relation
+	// 		);
+	// 	}
+	// }
 }
