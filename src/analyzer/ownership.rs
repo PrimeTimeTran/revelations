@@ -115,11 +115,28 @@ impl Workspace {
 		let node = resolver.resolve();
 		Ok(node)
 	}
-	// fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
-	// 	let syntax_tree = syn::parse_file(source).unwrap();
-	// 	let resolver = NodeResolver::new(line, column, pos(line, column));
-	// 	resolver.resolve_file(&syntax_tree)
-	// }
+	fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
+		let syntax_tree = syn::parse_file(source).unwrap();
+		let resolver = NodeResolver {
+			next_id: 0,
+			line,
+			column,
+			current_name: None,
+			position: pos(line, column),
+			candidates: Vec::new(),
+			best: None,
+			nodes: Vec::new(),
+			ancestors: Vec::new(),
+		};
+		resolver.resolve_file(&syntax_tree)
+	}
+	fn resolve_click_on(source: &str, name: &str, occurrence: Occurrence) -> NodeContext {
+		let (line, column) = match occurrence {
+			Occurrence::First => position_of(source, name),
+			Occurrence::Last => position_of_last(source, name),
+		};
+		Self::resolve_click(source, line, column)
+	}
 	fn analyze_click(
 		ast: &syn::File,
 		context: ClickContext,
@@ -130,6 +147,7 @@ impl Workspace {
 			context.line,
 			context.column,
 		));
+
 		ClickReport {
 			context,
 			symbols,
@@ -254,9 +272,7 @@ impl Workspace {
 		let subject = subject
 			.as_ref()
 			.ok_or_else(|| AnalysisError::Parse("No subject node found at position".into()))?;
-
 		let mut graph = Graph::new();
-
 		let discovered = {
 			let mut visitor = OwnershipVisitor::new(
 				subject.clone(),
@@ -269,7 +285,6 @@ impl Workspace {
 
 			visitor.related_symbols.clone()
 		};
-
 		println!("===== GRAPH EDGES AFTER VISITOR =====");
 		for edge in &graph.edges {
 			println!(
@@ -294,31 +309,42 @@ impl Workspace {
 		options: &AnalyzerOptions,
 	) -> Result<AnalysisReport, AnalysisError> {
 		let mut cfg = AnalyzeConfig::new(Some(file_path), options);
-		let log = Log::new(&options, &mut cfg);
-		// Change settings
-		// log.cfg.set_level(val);
-		let (source, syntax_tree) = Self::parse_file(file_path)?;
-		let click = ClickContext::new(file_path, &source, options);
+		let log = Log::new(options, &mut cfg);
 		log.cfg.set_level("1");
 
-		let line = options
-			.line
-			.ok_or_else(|| AnalysisError::Parse("Missing line".into()))?;
+		// ─────────────────────────────────────
+		// 1. Parse this file
+		// ─────────────────────────────────────
+		let (source, syntax_tree) = Self::parse_file(file_path)?;
 
-		let column = options
-			.column
-			.ok_or_else(|| AnalysisError::Parse("Missing column".into()))?;
-		let context = resolve_click(&source.to_string(), line as usize, column as usize);
-
-		let context = Self::resolve_node(&syntax_tree, options)?;
-		
+		// ─────────────────────────────────────
+		// 2. Resolve the click
+		// ─────────────────────────────────────
+		let click = ClickContext::new(file_path, &source, options);
+		let context = Self::resolve_node_context(&syntax_tree, click.line, click.column);
 		let subject = context
 			.subject
 			.clone()
 			.ok_or_else(|| AnalysisError::Parse("No subject node found".into()))?;
-		
+		// ─────────────────────────────────────
+		// 3. Classify the clicked node
+		// ─────────────────────────────────────
 		let classification = Self::classify_node(&context);
 
+		log.print("Subject", Vals::new().subject(&subject));
+
+		log.print(
+			"Classification",
+			Vals::new().classification(&classification),
+		);
+
+		for ancestor in &context.ancestors {
+			log.print("Ancestors", Vals::new().ancestors(&ancestor.kind));
+		}
+
+		// ─────────────────────────────────────
+		// 4. Build semantic graph for this file
+		// ─────────────────────────────────────
 		let mut graph = Graph::new();
 
 		let mut visitor = OwnershipVisitor::new(
@@ -330,88 +356,15 @@ impl Workspace {
 
 		visitor.visit_file(&syntax_tree);
 
-		match Some(subject.clone()) {
-			node => log.print("Subject", Vals::new().subject(&node.unwrap())),
-		}
-
-		let ctx = Self::resolve_node(&syntax_tree, options)?;
-		let classification = Self::classify_node(&ctx);
-		log.print(
-			"Classification",
-			Vals::new().classification(&classification),
-		);
 		// ─────────────────────────────────────
-		// 4. Build semantic graph
+		// 5. Project graph → source lines
 		// ─────────────────────────────────────
-		let mut graph = Self::build_graph(&syntax_tree, file_path, options, &Some(subject.clone()))?;
-
-		println!("===== FINAL GRAPH =====");
-		for edge in &graph.edges {
-			println!(
-				"{:?} -> {:?} ({:?}, {:?})",
-				edge.from, edge.to, edge.relation, edge.influence,
-			);
-		}
-
-		// ─────────────────────────────────────
-		// 5. Find subject graph node
-		// ─────────────────────────────────────
-
-		// let subject_id = graph
-		// .find_subject(&context.subject)
-		// .ok_or_else(|| {
-		//     AnalysisError::Parse(
-		//         "Subject not found in graph".into()
-		//     )
-		// })?;
-
-		// // ─────────────────────────────────────
-		// // 6. Traverse downstream influence
-		// // ─────────────────────────────────────
-
-		// let affected = graph.downstream(subject_id);
-
-		// // ─────────────────────────────────────
-		// // 7. Project graph → source lines
-		// // ─────────────────────────────────────
-
-		// let lines = Self::build_line_analysis(
-		//     &syntax_tree,
-		//     &graph,
-		//     subject_id,
-		//     &affected,
-		//     file_path,
-		// );
-
-		for ancestor in &context.ancestors {
-			log.print("Ancestors", Vals::new().ancestors(&ancestor.kind));
-		}
-
-		let kind = classify_line(&syntax_tree, options.line.unwrap());
-
-		let mut workspace = Workspace::new();
-		let file_id = workspace.add_symbol(
-			Sym::file(
-				0,
-				file_path
-					.file_name()
-					.unwrap_or_default()
-					.to_string_lossy()
-					.to_string(),
-			),
-			Some(workspace.root),
-		);
-		workspace.files.push(file_id);
-		let mut visitor = OwnershipVisitor::new(
-			subject.clone(),
-			subject.name.clone(),
-			options.clone(),
-			&mut graph,
-		);
-		visitor.visit_file(&syntax_tree);
-		// let scope = Self::find_scope_at_position(&syntax_tree, options);
 		let lines = Self::stage_build_line_analysis(&visitor, file_path, &source);
-		Self::stage_report(ctx, click, lines, classification)
+
+		// ─────────────────────────────────────
+		// 6. Build report
+		// ─────────────────────────────────────
+		Self::stage_report(context, click, lines, classification)
 	}
 	pub fn stage_build_line_analysis(
 		visitor: &OwnershipVisitor,
@@ -2373,29 +2326,6 @@ enum Occurrence {
 	First,
 	Last,
 }
-fn resolve_click(source: &str, line: usize, column: usize) -> NodeContext {
-	let syntax_tree = syn::parse_file(source).unwrap();
-	let resolver = NodeResolver {
-		next_id: 0,
-		line,
-		column,
-		current_name: None,
-		position: pos(line, column),
-		candidates: Vec::new(),
-		best: None,
-		nodes: Vec::new(),
-		ancestors: Vec::new(),
-	};
-	resolver.resolve_file(&syntax_tree)
-}
-fn resolve_click_on(source: &str, name: &str, occurrence: Occurrence) -> NodeContext {
-	let (line, column) = match occurrence {
-		Occurrence::First => position_of(source, name),
-		Occurrence::Last => position_of_last(source, name),
-	};
-
-	resolve_click(source, line, column)
-}
 fn position_of(source: &str, needle: &str) -> (usize, usize) {
 	for (line, text) in source.lines().enumerate() {
 		if let Some(column) = text.find(needle) {
@@ -2477,20 +2407,18 @@ mod tests {
 			Occurrence::Last => position_of_last(source, name),
 		};
 		let syntax_tree = syn::parse_file(source).unwrap();
-		let context = resolve_click(source, line, column);
-		println!("CLICK {}:{} on {}", line, column, name);
-		let subject = context.subject.expect("expected subject");
 		let options = AnalyzerOptions {
 			line: Some(line as u32),
 			column: Some(column as u32),
 			..AnalyzerOptions::default()
 		};
+		let context = Workspace::resolve_node_context(&syntax_tree, line, column);
+		println!("CLICK {}:{} on {}", line, column, name);
+		let subject = context.subject.expect("expected subject");
 		let mut graph = Graph::new();
 		let mut visitor =
 			OwnershipVisitor::new(subject.clone(), subject.name.clone(), options, &mut graph);
-
 		visitor.visit_file(&syntax_tree);
-
 		Workspace::stage_build_related_lines_from_subject(&visitor, &PathBuf::from("test.rs"))
 	}
 	fn assert_line(related: &[LineRelated], line: usize, relation: OwnershipRelation) {
@@ -2536,7 +2464,7 @@ mod tests {
 	let other = item;
 	}
 	"#;
-		let context = resolve_click_on(source, "item", Occurrence::Last);
+		let context = Workspace::resolve_click_on(source, "item", Occurrence::Last);
 		assert_subject!(&context, AstNodeKind::Path);
 		assert_subject_name(&context, "item");
 	}
@@ -2550,7 +2478,7 @@ mod tests {
 
 		let (line, column) = position_of(source, "item");
 
-		let context = resolve_click(source, line, column);
+		let context = Workspace::resolve_click(source, line, column);
 
 		let subject = context.subject.expect("expected subject");
 
@@ -2576,7 +2504,7 @@ mod tests {
 
 		let (line, column) = positions[1];
 
-		let context = resolve_click(source, line, column);
+		let context = Workspace::resolve_click(source, line, column);
 
 		let subject = context.subject.expect("expected subject");
 
@@ -2592,7 +2520,7 @@ mod tests {
 
 		let (line, column) = position_of(source, "item");
 
-		let context = resolve_click(source, line, column);
+		let context = Workspace::resolve_click(source, line, column);
 
 		let local = context
 			.ancestors
@@ -2613,7 +2541,7 @@ mod tests {
 
 		let (line, column) = position_of(source, "other");
 
-		let context = resolve_click(source, line, column);
+		let context = Workspace::resolve_click(source, line, column);
 
 		let subject = context.subject.expect("expected subject");
 
@@ -2626,7 +2554,7 @@ mod tests {
 	let item = "hello";
 	}
 	"#;
-		let context = resolve_click_on(source, "item", Occurrence::First);
+		let context = Workspace::resolve_click_on(source, "item", Occurrence::First);
 		assert_subject!(&context, AstNodeKind::PatternIdentifier);
 		assert_subject_name(&context, "item");
 		assert_local!(context, mutable = Some(false));
@@ -2639,7 +2567,7 @@ mod tests {
 	}
 	"#;
 
-		let context = resolve_click_on(source, "item", Occurrence::First);
+		let context = Workspace::resolve_click_on(source, "item", Occurrence::First);
 
 		assert_local!(context, mutable = Some(true));
 	}
@@ -2656,7 +2584,7 @@ mod tests {
 
 		println!("CLICK {}:{}", line, column);
 
-		let context = resolve_click(source, line, column);
+		let context = Workspace::resolve_click(source, line, column);
 
 		println!("CLICK {}:{} on {}", line, column, "item");
 
@@ -2722,7 +2650,7 @@ mod tests {
     let item: i32 = 1;
 	}
 	"#;
-		let node = resolve_click_on(source, "item", Occurrence::First);
+		let node = Workspace::resolve_click_on(source, "item", Occurrence::First);
 		// assert_eq!(node.type_name, Some("i32".into()));
 	}
 	#[test]
@@ -2751,7 +2679,7 @@ mod tests {
 	}
 	"#;
 
-		let context = resolve_click_on(source, "num", Occurrence::First);
+		let context = Workspace::resolve_click_on(source, "num", Occurrence::First);
 
 		assert_subject_name(&context, "num");
 		assert_subject!(context, AstNodeKind::PatternIdentifier);
@@ -2767,7 +2695,7 @@ mod tests {
 	}
 	"#;
 
-		let context = resolve_click_on(source, "foo", Occurrence::Last);
+		let context = Workspace::resolve_click_on(source, "foo", Occurrence::Last);
 
 		assert_subject_name(&context, "foo");
 	}
@@ -2779,7 +2707,7 @@ mod tests {
 	}
 	"#;
 
-		let context = resolve_click_on(source, "foo", Occurrence::First);
+		let context = Workspace::resolve_click_on(source, "foo", Occurrence::First);
 
 		assert_subject_name(&context, "foo");
 	}
@@ -2805,9 +2733,7 @@ mod tests {
     println!("{}", num);
 	}
 	"#;
-
 		let related = analyze_click_on(source, "num", Occurrence::Last);
-
 		assert_line(&related, 3, OwnershipRelation::Declaration);
 		assert_line(&related, 4, OwnershipRelation::Reference);
 	}
