@@ -1185,38 +1185,70 @@ impl<'a> OwnershipVisitor<'a> {
 			.rev()
 			.find_map(|scope| scope.get(name).copied())
 	}
+	fn build_downstream(graph: &Graph, subject: &NodeId) -> HashSet<NodeId> {
+		let mut related = HashSet::new();
+		let mut stack = vec![subject];
+		while let Some(current) = stack.pop() {
+			for edge in graph.edges_from(&current) {
+				if edge.influence != InfluenceKind::Direct {
+					continue;
+				}
+				match edge.relation {
+					RelationKind::Downstream => {
+						if related.insert(edge.to) {
+							stack.push(&edge.to);
+						}
+					}
+					_ => {}
+				}
+			}
+		}
+		related
+	}
 	fn visit_macro_tokens(&mut self, tokens: proc_macro2::TokenStream) {
+		let downstream = self
+			.subject_symbol
+			.map(|id| Self::build_downstream(self.graph, &id))
+			.unwrap_or_default();
+
+		self.visit_macro_tokens_inner(tokens, &downstream);
+	}
+
+	fn visit_macro_tokens_inner(
+		&mut self,
+		tokens: proc_macro2::TokenStream,
+		downstream: &HashSet<NodeId>,
+	) {
 		for token in tokens {
 			match token {
 				TokenTree::Ident(ident) => {
 					let name = ident.to_string();
 					let span = ident.span();
 
-					let resolved_id = self.resolve_symbol(&name);
+					let Some(resolved_id) = self.resolve_symbol(&name) else {
+						continue;
+					};
 
-					println!(
-						"MACRO REFERENCE {} => {:?} span={:?}",
-						name, resolved_id, span
-					);
-					if let (Some(resolved_id), Some(subject_id)) = (resolved_id, self.subject_symbol) {
-						if resolved_id == subject_id {
-							self
-								.related_spans
-								.push((span, OwnershipRelation::Reference));
+					let is_subject = Some(resolved_id) == self.subject_symbol;
+					let is_downstream = downstream.contains(&resolved_id);
 
-							self.related_symbols.push(SymReference {
-								name,
-								span,
-								role: SymRole::Reference,
-								resolved_id: Some(resolved_id),
-								relation: OwnershipRelation::Reference,
-							});
-						}
+					if is_subject || is_downstream {
+						self
+							.related_spans
+							.push((span, OwnershipRelation::Reference));
+
+						self.related_symbols.push(SymReference {
+							name,
+							span,
+							role: SymRole::Reference,
+							resolved_id: Some(resolved_id),
+							relation: OwnershipRelation::Reference,
+						});
 					}
 				}
 
 				TokenTree::Group(group) => {
-					self.visit_macro_tokens(group.stream());
+					self.visit_macro_tokens_inner(group.stream(), downstream);
 				}
 
 				TokenTree::Punct(_) | TokenTree::Literal(_) => {}
