@@ -339,8 +339,8 @@ impl Workspace {
 			}
 		};
 
-		for span in &ownership.related_spans {
-			add(span.start().line, OwnershipRelation::Reference);
+		for (span, relation) in &ownership.related_spans {
+			add(span.start().line, relation.clone());
 		}
 
 		for symbol in &ownership.symbols {
@@ -760,14 +760,6 @@ pub struct SerializableSpan {
 	pub end_line: usize,
 	pub end_col: usize,
 }
-#[derive(Serialize, Debug, Clone)]
-pub struct ResolvedNode {
-	pub id: NodeId,
-	pub kind: AstNodeKind,
-	pub span: SerializableSpan,
-	pub mutable: Option<bool>,
-	pub name: Option<String>,
-}
 impl From<proc_macro2::Span> for SerializableSpan {
 	fn from(span: proc_macro2::Span) -> Self {
 		let start = span.start();
@@ -780,6 +772,15 @@ impl From<proc_macro2::Span> for SerializableSpan {
 		}
 	}
 }
+#[derive(Serialize, Debug, Clone)]
+pub struct ResolvedNode {
+	pub id: NodeId,
+	pub kind: AstNodeKind,
+	pub span: SerializableSpan,
+	pub mutable: Option<bool>,
+	pub name: Option<String>,
+}
+
 impl From<serde_json::Error> for AnalysisError {
 	fn from(err: serde_json::Error) -> Self {
 		// AnalysisError::SerializationError(err.to_string())
@@ -831,6 +832,11 @@ struct NodeResolver {
 	next_id: usize,
 }
 impl NodeResolver {
+	// 	fn next_node_id(&mut self) -> NodeId {
+	// 	let id = self.next_id;
+	// 	self.next_id = NodeId(self.next_id.0 + 1);
+	// 	id
+	// }
 	fn next_node_id(&mut self) -> NodeId {
 		let id = NodeId(self.next_id);
 		self.next_id += 1;
@@ -1111,7 +1117,7 @@ pub struct OwnershipVisitor<'a> {
 
 	// ── Symbol resolution ─────────────────────────
 	scopes: Vec<HashMap<String, NodeId>>,
-	next_id: usize,
+	next_id: NodeId,
 
 	// ── Traversal state ────────────────────────────
 	function_depth: usize,
@@ -1119,7 +1125,7 @@ pub struct OwnershipVisitor<'a> {
 
 	// ── Results ────────────────────────────────────
 	pub subject_symbol: Option<NodeId>,
-	pub related_spans: Vec<proc_macro2::Span>,
+	pub related_spans: Vec<(proc_macro2::Span, OwnershipRelation)>,
 	pub related_symbols: Vec<SymReference>,
 	pub graph: &'a mut Graph,
 
@@ -1139,23 +1145,23 @@ impl<'a> OwnershipVisitor<'a> {
 			graph,
 			subject,
 			options,
-			next_id: 0,
-			last_call_id: None,
+			next_id: NodeId(0),
 			subject_name,
 			function_depth: 0,
-			call_ids: HashMap::new(),
 			subject_symbol: None,
 			current_function: None,
 			scope_spans: Vec::new(),
 			related_spans: Vec::new(),
 			related_symbols: Vec::new(),
 			scopes: vec![HashMap::new()],
+			last_call_id: None,
+			call_ids: HashMap::new(),
 		}
 	}
 
 	fn next_node_id(&mut self) -> NodeId {
-		let id = NodeId(self.next_id);
-		self.next_id += 1;
+		let id = self.next_id;
+		self.next_id = NodeId(self.next_id.0 + 1);
 		id
 	}
 	fn push_scope(&mut self) {
@@ -1165,8 +1171,7 @@ impl<'a> OwnershipVisitor<'a> {
 		self.scopes.pop();
 	}
 	fn define_symbol(&mut self, name: String) -> NodeId {
-		let id = NodeId(self.next_id);
-		self.next_id += 1;
+		let id = self.next_node_id();
 		self.scopes.last_mut().unwrap().insert(name.clone(), id);
 		if self.subject_name.as_deref() == Some(&name) {
 			self.subject_symbol = Some(id);
@@ -1189,16 +1194,15 @@ impl<'a> OwnershipVisitor<'a> {
 
 					let resolved_id = self.resolve_symbol(&name);
 
-					// println!(
-					// 	"MACRO REFERENCE {} => {:?} span={:?}",
-					// 	name, resolved_id, span
-					// );
-
+					println!(
+						"MACRO REFERENCE {} => {:?} span={:?}",
+						name, resolved_id, span
+					);
 					if let (Some(resolved_id), Some(subject_id)) = (resolved_id, self.subject_symbol) {
 						if resolved_id == subject_id {
-							// println!("*** MACRO REFERENCE TO SUBJECT ***");
-
-							self.related_spans.push(span);
+							self
+								.related_spans
+								.push((span, OwnershipRelation::Reference));
 
 							self.related_symbols.push(SymReference {
 								name,
@@ -1279,8 +1283,6 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		let start = node.span().start();
 		self.call_ids.insert((start.line, start.column), call_id);
 		self.last_call_id = Some(call_id);
-		println!("CALL => {:?}", call_id);
-
 		let mut subject_related = false;
 
 		for arg in &node.args {
@@ -1308,7 +1310,6 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 
 			if Some(source_id) == self.subject_symbol {
 				subject_related = true;
-
 				self.related_symbols.push(SymReference {
 					name,
 					span: arg.span().into(),
@@ -1320,7 +1321,9 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		}
 
 		if subject_related {
-			self.related_spans.push(node.span());
+			self
+				.related_spans
+				.push((node.span(), OwnershipRelation::Argument));
 		}
 
 		syn::visit::visit_expr_call(self, node);
@@ -1426,7 +1429,9 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 						});
 
 						if Some(source_id) == self.subject_symbol {
-							self.related_spans.push(expr.span().into());
+							self
+								.related_spans
+								.push((expr.span(), OwnershipRelation::Return));
 						}
 					}
 				}
@@ -1460,7 +1465,9 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 							);
 
 							if Some(id) == self.subject_symbol {
-								self.related_spans.push(lhs.span());
+								self
+									.related_spans
+									.push((lhs.span(), OwnershipRelation::Mutation));
 
 								self.related_symbols.push(SymReference {
 									name,
@@ -1541,9 +1548,9 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 
 		// This reference resolves to the node we clicked.
 		if Some(resolved_id) == self.subject_symbol {
-			// println!("REFERENCE TO SUBJECT: {}", name);
-
-			self.related_spans.push(span);
+			self
+				.related_spans
+				.push((span, OwnershipRelation::Reference));
 
 			self.related_symbols.push(SymReference {
 				name: name.clone(),
@@ -2647,5 +2654,5 @@ pub struct OwnershipGraph {
 	pub graph: Graph,
 	pub symbols: Vec<SymReference>,
 	pub subject_id: Option<NodeId>,
-	pub related_spans: Vec<Span>,
+	pub related_spans: Vec<(proc_macro2::Span, OwnershipRelation)>,
 }
