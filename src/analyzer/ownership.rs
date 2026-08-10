@@ -75,7 +75,7 @@ impl Workspace {
 	}
 	fn build_direct_relationships(graph: &mut Graph, symbols: &[SymReference]) {
 		for symbol in symbols {
-			let Some(id) = symbol.resolved_id else {
+			let Some(_id) = symbol.resolved_id else {
 				continue;
 			};
 		}
@@ -113,7 +113,7 @@ impl Workspace {
 			related_spans,
 		}
 	}
-	fn build_dependency_closure(graph: &Graph, subject: NodeId) -> HashSet<NodeId> {
+	fn build_dependency_closure(_graph: &Graph, _subject: NodeId) -> HashSet<NodeId> {
 		todo!("build_dependency_closure")
 	}
 	fn analyze_ownership(
@@ -145,7 +145,7 @@ impl Workspace {
 		Self::stage_report(ctx, click, lines, classification)
 	}
 
-	pub fn analyze_ownership_on_click(
+	pub fn analyze(
 		file_path: &PathBuf,
 		options: &AnalyzerOptions,
 	) -> Result<AnalysisReport, AnalysisError> {
@@ -166,15 +166,15 @@ impl Workspace {
 			})
 			.collect();
 		let mut add = |line: usize, relation: OwnershipRelation| {
-			if let Some(entry) = lines.get_mut(line.saturating_sub(1)) {
-				if !entry.relations.contains(&relation) {
-					entry.relations.push(relation);
-				}
+			if let Some(entry) = lines.get_mut(line.saturating_sub(1))
+				&& !entry.relations.contains(&relation)
+			{
+				entry.relations.push(relation);
 			}
 		};
 		for (span, relation) in &ownership.related_spans {
 			let s = span.start();
-			let e = span.end();
+			let _e = span.end();
 			add(s.line, relation.clone());
 		}
 		let Some(subject_id) = ownership.subject_id else {
@@ -213,7 +213,7 @@ impl Workspace {
 		let analysis = AnalysisData {
 			related_lines: analysis,
 			node_context: ctx.clone(),
-			classification: classification,
+			classification,
 			symbols: Vec::new(),
 		};
 		let formatted_output = build_final_analysis(&click, Some(&related_lines));
@@ -222,7 +222,7 @@ impl Workspace {
 			analysis,
 			formatted_output,
 		};
-		let json_output = serde_json::to_string(&report)?;
+		let _json_output = serde_json::to_string(&report)?;
 		Ok(report)
 	}
 }
@@ -903,17 +903,12 @@ impl<'a> OwnershipVisitor<'a> {
 		let mut related = HashSet::new();
 		let mut stack = vec![subject];
 		while let Some(current) = stack.pop() {
-			for edge in graph.edges_from(&current) {
+			for edge in graph.edges_from(current) {
 				if edge.influence != InfluenceKind::Direct {
 					continue;
 				}
-				match edge.relation {
-					RelationKind::Downstream => {
-						if related.insert(edge.to) {
-							stack.push(&edge.to);
-						}
-					}
-					_ => {}
+				if edge.relation == RelationKind::Downstream && related.insert(edge.to) {
+					stack.push(&edge.to);
 				}
 			}
 		}
@@ -981,22 +976,21 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 			syn::Expr::MethodCall(method) => {
 				let method_name = method.method.to_string();
 				if method_name == "clone" {
-					let span = method.span();
+					let _span = method.span();
 				}
 			}
 			syn::Expr::Call(call) => {
-				if let syn::Expr::Path(expr_path) = &*call.func {
-					if let Some(segment) = expr_path.path.segments.last() {
-						if segment.ident == "Box" {}
-					}
-				}
+				if let syn::Expr::Path(expr_path) = &*call.func
+					&& let Some(segment) = expr_path.path.segments.last()
+					&& segment.ident == "Box"
+				{}
 			}
 			_ => {}
 		}
 		syn::visit::visit_expr(self, node);
 	}
 	fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
-		let key = (node.span().start().line, node.span().start().column);
+		let _key = (node.span().start().line, node.span().start().column);
 		let call_id = self.next_node_id();
 		let start = node.span().start();
 		self.call_ids.insert((start.line, start.column), call_id);
@@ -1024,7 +1018,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 				subject_related = true;
 				self.related_symbols.push(SymReference {
 					name,
-					span: arg.span().into(),
+					span: arg.span(),
 					role: SymRole::Reference,
 					resolved_id: Some(source_id),
 					relation: OwnershipRelation::Argument,
@@ -1043,11 +1037,11 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 			syn::Type::Path(type_path) => {
 				// Extracts explicit type paths (e.g., String, i32, MyCustomStruct)
 				if let Some(segment) = type_path.path.segments.last() {
-					let type_name = segment.ident.to_string();
+					let _type_name = segment.ident.to_string();
 					// Track or log type usage here
 				}
 			}
-			syn::Type::Reference(type_ref) => {
+			syn::Type::Reference(_type_ref) => {
 				// Detects explicit references (&T or &mut T)
 				// Useful for tracking borrowing vs ownership
 			}
@@ -1071,7 +1065,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		let id = self.define_symbol(name.clone());
 		self.related_symbols.push(SymReference {
 			name: name.clone(),
-			span: pat_ident.ident.span().into(),
+			span: pat_ident.ident.span(),
 			role: SymRole::Declaration,
 			resolved_id: Some(id),
 			relation: OwnershipRelation::Declaration,
@@ -1118,7 +1112,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		let function_id = self.define_symbol(name.clone());
 		self.related_symbols.push(SymReference {
 			name: name.clone(),
-			span: span.into(),
+			span,
 			role: SymRole::Declaration,
 			resolved_id: Some(function_id),
 			relation: OwnershipRelation::Definition,
@@ -1128,24 +1122,23 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 		self.pop_scope();
 	}
 	fn visit_expr_return(&mut self, node: &'ast syn::ExprReturn) {
-		if let Some(expr) = &node.expr {
-			if let syn::Expr::Path(path) = &**expr {
-				if let Some(segment) = path.path.segments.last() {
-					let name = segment.ident.to_string();
-					if let Some(source_id) = self.resolve_symbol(&name) {
-						self.related_symbols.push(SymReference {
-							name,
-							span: expr.span().into(),
-							role: SymRole::Reference,
-							resolved_id: Some(source_id),
-							relation: OwnershipRelation::Return,
-						});
-						if Some(source_id) == self.subject_symbol {
-							self
-								.related_spans
-								.push((expr.span(), OwnershipRelation::Return));
-						}
-					}
+		if let Some(expr) = &node.expr
+			&& let syn::Expr::Path(path) = &**expr
+			&& let Some(segment) = path.path.segments.last()
+		{
+			let name = segment.ident.to_string();
+			if let Some(source_id) = self.resolve_symbol(&name) {
+				self.related_symbols.push(SymReference {
+					name,
+					span: expr.span(),
+					role: SymRole::Reference,
+					resolved_id: Some(source_id),
+					relation: OwnershipRelation::Return,
+				});
+				if Some(source_id) == self.subject_symbol {
+					self
+						.related_spans
+						.push((expr.span(), OwnershipRelation::Return));
 				}
 			}
 		}
@@ -1164,26 +1157,26 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 			| BinOp::BitOrAssign(_)
 			| BinOp::ShlAssign(_)
 			| BinOp::ShrAssign(_) => {
-				if let syn::Expr::Path(lhs) = &*node.left {
-					if let Some(segment) = lhs.path.segments.last() {
-						let name = segment.ident.to_string();
-						if let Some(id) = self.resolve_symbol(&name) {
-							println!(
-								"MUTATION {} => {:?} subject={:?}",
-								name, id, self.subject_symbol
-							);
-							if Some(id) == self.subject_symbol {
-								self
-									.related_spans
-									.push((lhs.span(), OwnershipRelation::Assignment));
-								self.related_symbols.push(SymReference {
-									name,
-									span: lhs.span().into(),
-									role: SymRole::Reference,
-									resolved_id: Some(id),
-									relation: OwnershipRelation::Mutation,
-								});
-							}
+				if let syn::Expr::Path(lhs) = &*node.left
+					&& let Some(segment) = lhs.path.segments.last()
+				{
+					let name = segment.ident.to_string();
+					if let Some(id) = self.resolve_symbol(&name) {
+						println!(
+							"MUTATION {} => {:?} subject={:?}",
+							name, id, self.subject_symbol
+						);
+						if Some(id) == self.subject_symbol {
+							self
+								.related_spans
+								.push((lhs.span(), OwnershipRelation::Assignment));
+							self.related_symbols.push(SymReference {
+								name,
+								span: lhs.span(),
+								role: SymRole::Reference,
+								resolved_id: Some(id),
+								relation: OwnershipRelation::Mutation,
+							});
 						}
 					}
 				}
@@ -1220,7 +1213,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 				.push((lhs.span(), OwnershipRelation::Assignment));
 			self.related_symbols.push(SymReference {
 				name,
-				span: lhs.span().into(),
+				span: lhs.span(),
 				role: SymRole::Reference,
 				resolved_id: Some(lhs_id),
 				relation: OwnershipRelation::Assignment,
@@ -1249,7 +1242,7 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for OwnershipVisitor<'a> {
 				.push((span, OwnershipRelation::Reference));
 			self.related_symbols.push(SymReference {
 				name: name.clone(),
-				span: span.into(),
+				span,
 				role: SymRole::Reference,
 				resolved_id: Some(resolved_id),
 				relation: OwnershipRelation::Reference,
@@ -1271,29 +1264,17 @@ pub struct ClickReport {
 }
 use crate::{
 	_config::{AnalyzeConfig, Logger as Log, Vals},
-	_scope::Scope,
 	analyzer::*,
 	ir::*,
 };
 use proc_macro2::Span;
-use quote::ToTokens;
-use regex_syntax::ast::Ast;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::{
-	collections::{HashMap, HashSet, VecDeque},
-	fs::read_to_string,
-	io::{self},
-	path::{Path, PathBuf},
+	collections::{HashMap, HashSet},
+	path::PathBuf,
 };
-use std::{fmt::Write, io::Write as _};
-use swc_core::common::LineCol;
-use syn::{
-	File, Ident, Token,
-	spanned::Spanned,
-	token::Token,
-	visit::{self, Visit, visit_local},
-	visit_mut::{self, VisitMut},
-};
+use syn::{spanned::Spanned, visit::Visit};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SourcePosition {
 	pub line: u32,
@@ -1346,7 +1327,7 @@ fn build_final_analysis(context: &ClickContext, lines: Option<&[LineRelated]>) -
 				output,
 				"{}{}^ (column {})",
 				" ".repeat(prefix.len()),
-				" ".repeat(context.column as usize),
+				" ".repeat(context.column),
 				context.column,
 			);
 		}
@@ -1422,6 +1403,12 @@ pub struct Graph {
 	pub nodes: Vec<GraphNode>,
 	pub edges: Vec<Edge>,
 }
+impl Default for Graph {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
 impl Graph {
 	pub fn new() -> Self {
 		Self {
@@ -1799,7 +1786,7 @@ fn main() {
     let item = source;
 	}
 	"#;
-		let analysis = analyze_click(source, "item", Occurrence::First);
+		let _analysis = analyze_click(source, "item", Occurrence::First);
 		// item depends on source
 	}
 	#[test]

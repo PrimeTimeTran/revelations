@@ -1,19 +1,6 @@
 use crate::{_config::AnalyzeConfig, analyzer::*, ir::*};
-use proc_macro2::Span;
-use quote::ToTokens;
-use regex_syntax::ast::Ast;
-use serde::{Deserialize, Serialize};
-use std::{
-	collections::HashMap,
-	fs::read_to_string,
-	path::{Path, PathBuf},
-};
-use syn::{
-	File, Ident,
-	spanned::Spanned,
-	visit::{self, Visit},
-	visit_mut::{self, VisitMut},
-};
+use std::path::{Path, PathBuf};
+use syn::{File, visit::Visit};
 
 ///--------------------------------------------------------------------------------
 ///      Pipelines:
@@ -75,8 +62,8 @@ impl RustAnalyzer {
 	// 2. Discover src/lib.rs, src/main.rs, tests/, examples/, etc.
 	// 3. Build the package's module graph.
 	// 4. For each file, call analyze_file().
-	fn analyze_package(&self, path: PathBuf, options: &AnalyzerOptions) {}
-	fn analyze_module(&self, path: PathBuf, options: &AnalyzerOptions) {}
+	fn analyze_package(&self, _path: PathBuf, _options: &AnalyzerOptions) {}
+	fn analyze_module(&self, _path: PathBuf, _options: &AnalyzerOptions) {}
 	// 1. Read file.
 	// 2. Parse with syn.
 	// 3. Visit AST.
@@ -178,6 +165,7 @@ impl RustAnalyzer {
 		Ok(workspace)
 	}
 	fn build_source(&self, path: PathBuf) -> (String, Result<File, AnalysisError>) {
+		// "/Users/future/KB/project/crates/estate/src"
 		let source = std::fs::read_to_string(&path)
 			.map_err(|e| AnalysisError::Parse(e.to_string()))
 			.unwrap();
@@ -187,13 +175,19 @@ impl RustAnalyzer {
 }
 impl RustAnalyzer {
 	pub fn workspace_metrics(&self, workspace: &Workspace) -> WorkspaceMetrics {
-		let metrics = workspace.metrics();
+		let _metrics = workspace.metrics();
 		let mut metrics = WorkspaceMetrics::new(workspace);
 		for symbol in &workspace.symbols {
 			match &symbol.kind {
-				SymbolKind::Function(_) => metrics.functions += 1,
-				SymbolKind::Type(_) => metrics.types += 1,
-				SymbolKind::Import(_) => metrics.imports += 1,
+				SymbolKind::Function(_) => {
+					metrics.functions += 1;
+				}
+				SymbolKind::Type(_) => {
+					metrics.types += 1;
+				}
+				SymbolKind::Import(_) => {
+					metrics.imports += 1;
+				}
 				_ => {}
 			}
 		}
@@ -249,9 +243,15 @@ impl RustAnalyzer {
 					let symbol = &workspace.symbols[*child as usize];
 					metrics.symbols += 1;
 					match &symbol.kind {
-						SymbolKind::Function(_) => metrics.functions += 1,
-						SymbolKind::Import(_) => metrics.imports += 1,
-						SymbolKind::Type(_) => metrics.types += 1,
+						SymbolKind::Function(_) => {
+							metrics.functions += 1;
+						}
+						SymbolKind::Import(_) => {
+							metrics.imports += 1;
+						}
+						SymbolKind::Type(_) => {
+							metrics.types += 1;
+						}
 						_ => {}
 					}
 				}
@@ -268,8 +268,14 @@ pub struct Workspace {
 	pub files: Vec<SymId>,
 	pub packages: Vec<SymId>,
 	pub modules: Vec<SymId>,
+	pub functions: Vec<SymId>,
 	pub config: AnalyzeConfig,
 	next_sym_id: SymId,
+}
+impl Default for Workspace {
+	fn default() -> Self {
+		Self::new()
+	}
 }
 impl Workspace {
 	pub fn new() -> Self {
@@ -280,6 +286,7 @@ impl Workspace {
 			symbols: Vec::new(),
 			packages: Vec::new(),
 			modules: Vec::new(),
+			functions: Vec::new(),
 			files: Vec::new(),
 			next_sym_id: 0,
 		};
@@ -304,11 +311,11 @@ impl Workspace {
 		id
 	}
 }
-
 impl Workspace {
 	pub fn metrics(&self) -> AnalysisMetrics {
 		AnalysisMetrics {
 			workspace: self.workspace_metrics(),
+
 			packages: self
 				.packages
 				.iter()
@@ -320,21 +327,40 @@ impl Workspace {
 				.map(|id| self.module_metrics(*id))
 				.collect(),
 			files: self.files.iter().map(|id| self.file_metrics(*id)).collect(),
+			functions: self
+				.files
+				.iter()
+				.map(|id| self.function_metrics(*id))
+				.collect(),
 		}
 	}
 	pub fn workspace_metrics(&self) -> WorkspaceMetrics {
 		let mut metrics = WorkspaceMetrics::default();
 		metrics.packages = self.packages.len();
 		metrics.files = self.files.len();
+		metrics.functions = self.functions.len();
 		self.collect_metrics(self.root, &mut metrics);
+		metrics
+	}
+	pub fn function_metrics(&self, _id: SymId) -> FunctionMetrics {
+		let mut metrics = FunctionMetrics::default();
+		metrics.packages = self.packages.len();
+		metrics.files = self.files.len();
+		metrics.functions = self.functions.len();
 		metrics
 	}
 	fn collect_metrics(&self, id: SymId, metrics: &mut WorkspaceMetrics) {
 		let symbol = &self.symbols[id as usize];
 		match &symbol.kind {
-			SymbolKind::Function(_) => metrics.functions += 1,
-			SymbolKind::Type(_) => metrics.types += 1,
-			SymbolKind::Import(_) => metrics.imports += 1,
+			SymbolKind::Function(_) => {
+				metrics.functions += 1;
+			}
+			SymbolKind::Type(_) => {
+				metrics.types += 1;
+			}
+			SymbolKind::Import(_) => {
+				metrics.imports += 1;
+			}
 			// Don't count containers as symbols
 			SymbolKind::Package(_) => {}
 			SymbolKind::Module(_) => {}
@@ -456,7 +482,6 @@ pub struct ScopeQuery {
 	// What symbols count?
 	pub include: SymbolFilter,
 }
-
 pub enum Traversal {
 	Down,
 	Up,
@@ -469,6 +494,7 @@ pub enum SymbolFilter {
 	Code,
 	Modules,
 }
+
 // pub fn metrics(&self, query: ScopeQuery) -> Metrics {
 //     let symbols = self.project(query);
 //     Metrics::from_symbols(symbols)
@@ -486,19 +512,19 @@ pub struct PackageDiscovery {
 }
 
 impl RustAnalyzer {
-	fn discover_workspace(&self, path: &Path) -> Result<WorkspaceDiscovery, AnalysisError> {
+	fn discover_workspace(&self, _path: &Path) -> Result<WorkspaceDiscovery, AnalysisError> {
 		todo!()
 	}
-	fn find_workspace_root(&self, path: &Path) -> Option<PathBuf> {
+	fn find_workspace_root(&self, _path: &Path) -> Option<PathBuf> {
 		todo!()
 	}
-	fn find_estate_dir(&self, root: &Path) -> Option<PathBuf> {
+	fn find_estate_dir(&self, _root: &Path) -> Option<PathBuf> {
 		todo!()
 	}
-	fn discover_packages(&self, root: &Path) -> Result<Vec<PackageDiscovery>, AnalysisError> {
+	fn discover_packages(&self, _root: &Path) -> Result<Vec<PackageDiscovery>, AnalysisError> {
 		todo!()
 	}
-	fn discover_sources(&self, package: &Path) -> Result<Vec<PathBuf>, AnalysisError> {
+	fn discover_sources(&self, _package: &Path) -> Result<Vec<PathBuf>, AnalysisError> {
 		todo!()
 	}
 	// pub fn build_workspace(
@@ -601,94 +627,94 @@ impl RustAnalyzer {
 //         todo!()
 //     }
 // };
-pub fn resolve_node_at_position(
-	syntax_tree: &syn::File,
-	source: &str,
-	options: &AnalyzerOptions,
-) -> Result<(String, NodeContext), AnalysisError> {
-	let line = options
-		.line
-		.ok_or_else(|| AnalysisError::Parse("Missing line position".into()))?;
+// pub fn resolve_node_at_position(
+// 	syntax_tree: &syn::File,
+// 	source: &str,
+// 	options: &AnalyzerOptions,
+// ) -> Result<(String, NodeContext), AnalysisError> {
+// 	let line = options
+// 		.line
+// 		.ok_or_else(|| AnalysisError::Parse("Missing line position".into()))?;
 
-	let column = options
-		.column
-		.ok_or_else(|| AnalysisError::Parse("Missing column position".into()))?;
+// 	let column = options
+// 		.column
+// 		.ok_or_else(|| AnalysisError::Parse("Missing column position".into()))?;
 
-	let target_offset = source
-		.lines()
-		.take(line.saturating_sub(1) as usize)
-		.map(|line| line.len() + 1)
-		.sum::<usize>()
-		+ column as usize;
+// 	let target_offset = source
+// 		.lines()
+// 		.take(line.saturating_sub(1) as usize)
+// 		.map(|line| line.len() + 1)
+// 		.sum::<usize>()
+// 		+ column as usize;
 
-	struct OffsetFinder {
-		target: usize,
-		found_ident: Option<String>,
-		found_context: NodeContext,
-	}
+// 	struct OffsetFinder {
+// 		target: usize,
+// 		found_ident: Option<String>,
+// 		found_context: NodeContext,
+// 	}
 
-	enum NodeContext {
-		Identifier,
-		Statement,
-		Expression,
-		Unknown,
-	}
+// 	enum NodeContext {
+// 		Identifier,
+// 		Statement,
+// 		Expression,
+// 		Unknown,
+// 	}
 
-	impl<'ast> Visit<'ast> for OffsetFinder {
-		fn visit_ident(&mut self, i: &'ast syn::Ident) {
-			let range = i.span().byte_range();
+// 	impl<'ast> Visit<'ast> for OffsetFinder {
+// 		fn visit_ident(&mut self, i: &'ast syn::Ident) {
+// 			let range = i.span().byte_range();
 
-			if self.target >= range.start && self.target <= range.end {
-				self.found_ident = Some(i.to_string());
-				self.found_context = NodeContext::Identifier;
-			}
-		}
+// 			if self.target >= range.start && self.target <= range.end {
+// 				self.found_ident = Some(i.to_string());
+// 				self.found_context = NodeContext::Identifier;
+// 			}
+// 		}
 
-		fn visit_expr(&mut self, i: &'ast syn::Expr) {
-			let range = i.span().byte_range();
+// 		fn visit_expr(&mut self, i: &'ast syn::Expr) {
+// 			let range = i.span().byte_range();
 
-			if self.target >= range.start
-				&& self.target <= range.end
-				&& matches!(self.found_context, NodeContext::Unknown)
-			{
-				self.found_context = NodeContext::Expression;
-			}
+// 			if self.target >= range.start
+// 				&& self.target <= range.end
+// 				&& matches!(self.found_context, NodeContext::Unknown)
+// 			{
+// 				self.found_context = NodeContext::Expression;
+// 			}
 
-			syn::visit::visit_expr(self, i);
-		}
+// 			syn::visit::visit_expr(self, i);
+// 		}
 
-		fn visit_stmt(&mut self, i: &'ast syn::Stmt) {
-			let range = i.span().byte_range();
+// 		fn visit_stmt(&mut self, i: &'ast syn::Stmt) {
+// 			let range = i.span().byte_range();
 
-			if self.target >= range.start
-				&& self.target <= range.end
-				&& matches!(self.found_context, NodeContext::Unknown)
-			{
-				self.found_context = NodeContext::Statement;
-			}
+// 			if self.target >= range.start
+// 				&& self.target <= range.end
+// 				&& matches!(self.found_context, NodeContext::Unknown)
+// 			{
+// 				self.found_context = NodeContext::Statement;
+// 			}
 
-			syn::visit::visit_stmt(self, i);
-		}
-	}
+// 			syn::visit::visit_stmt(self, i);
+// 		}
+// 	}
 
-	let mut finder = OffsetFinder {
-		target: target_offset,
-		found_ident: None,
-		found_context: NodeContext::Unknown,
-	};
+// 	let mut finder = OffsetFinder {
+// 		target: target_offset,
+// 		found_ident: None,
+// 		found_context: NodeContext::Unknown,
+// 	};
 
-	finder.visit_file(syntax_tree);
+// 	finder.visit_file(syntax_tree);
 
-	let ident = finder.found_ident.ok_or_else(|| {
-		AnalysisError::Parse(format!(
-			"No valid identifier found at line {}, column {}",
-			options.line.unwrap(),
-			options.column.unwrap()
-		))
-	})?;
+// 	let ident = finder.found_ident.ok_or_else(|| {
+// 		AnalysisError::Parse(format!(
+// 			"No valid identifier found at line {}, column {}",
+// 			options.line.unwrap(),
+// 			options.column.unwrap()
+// 		))
+// 	})?;
 
-	Ok((ident, finder.found_context))
-}
+// 	Ok((ident, NodeContext))
+// }
 
 pub enum SymbolKindOutline {
 	File = 1,

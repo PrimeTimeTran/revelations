@@ -34,12 +34,12 @@ pub struct AnalyzeConfig {
 
 impl AnalyzeConfig {
 	pub fn new(file_path: Option<&Path>, opts: &AnalyzerOptions) -> Self {
-		let project_root = Self::find_project_root(file_path.unwrap());
+		let _project_root = Self::find_project_root(file_path.unwrap());
 		Self::load_with_overrides(file_path, opts)
 	}
 
 	/// The master builder: cascades and merges all layers from bottom to top.
-	pub fn load_with_overrides(project_path: Option<&Path>, opts: &AnalyzerOptions) -> Self {
+	pub fn load_with_overrides(project_path: Option<&Path>, _opts: &AnalyzerOptions) -> Self {
 		// Step 1: Base layer (Defaults)
 		let mut config = Self::default();
 		// Step 2: Merge Global User Config (if it exists)
@@ -47,10 +47,10 @@ impl AnalyzeConfig {
 			config.merge(&global_cfg);
 		}
 		// Step 3: Merge Project-Specific Config (if it exists)
-		if let Some(path) = project_path {
-			if let Some(project_cfg) = Self::load_project(path) {
-				config.merge(&project_cfg);
-			}
+		if let Some(path) = project_path
+			&& let Some(project_cfg) = Self::load_project(path)
+		{
+			config.merge(&project_cfg);
 		}
 		// Step 4: Apply Runtime / CLI overrides (highest precedence)
 		// config.apply_options(opts);
@@ -58,7 +58,7 @@ impl AnalyzeConfig {
 	}
 
 	/// Merges another config layer, overriding only explicitly set fields (using Options).
-	pub fn merge(&mut self, other: &AnalyzerOptions) {
+	pub fn merge(&mut self, _other: &AnalyzerOptions) {
 		// if let Some(level) = other.level {
 		//     self.level = level;
 		// }
@@ -69,7 +69,7 @@ impl AnalyzeConfig {
 	}
 
 	/// Applies immediate runtime flags passed via code or CLI.
-	pub fn apply_options(&mut self, opts: &AnalyzerOptions) {
+	pub fn apply_options(&mut self, _opts: &AnalyzerOptions) {
 		// if let Some(ref level) = opts.level {
 		//     self.set_level(level.clone());
 		// }
@@ -85,7 +85,7 @@ impl AnalyzeConfig {
 		None
 	}
 
-	fn load_project(root: &Path) -> Option<AnalyzerOptions> {
+	fn load_project(_root: &Path) -> Option<AnalyzerOptions> {
 		// Read from workspace root (e.g. root.join(".loi.json"))
 		None
 	}
@@ -216,6 +216,12 @@ pub struct Vals<'a> {
 	pub ancestor: Option<&'a AstNodeKind>,
 	pub subject: Option<&'a ResolvedNode>,
 }
+impl<'a> Default for Vals<'a> {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
 impl<'a> Vals<'a> {
 	// Base constructor starts with everything as None
 	pub fn new() -> Self {

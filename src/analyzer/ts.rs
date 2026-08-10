@@ -1,11 +1,4 @@
-use std::path::PathBuf;
-
-use swc_core::ecma::{
-	ast::{ClassDecl, FnDecl, Pat, VarDeclarator},
-	visit::Visit,
-};
-
-use crate::{analyzer::*, ir::*, parser::ParserContext};
+use crate::{analyzer::*, ir::*};
 
 pub struct TypeScriptAnalyzer;
 

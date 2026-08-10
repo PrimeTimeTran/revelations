@@ -23,7 +23,6 @@ url: https://github.com/ltvan/markdown-wiki-links
 ## Decorations
 
 - [Capabilities](https://code.visualstudio.com/api/extension-capabilities/overview)
-
 - [Decoration Render Options](https://code.visualstudio.com/api/references/vscode-api#DecorationRenderOptions)
 
 Types
@@ -64,7 +63,6 @@ pnpm build
 pnpm add -g @vscode/vsce
 vsce --version
 pnpm package
-# Bump version on pkg.json
 markdown-wiki-links-0.2.1.vsix
 ```
 
@@ -77,8 +75,7 @@ markdown-wiki-links-0.2.1.vsix
 - https://code.visualstudio.com/api/references/vscode-api#window.createTextEditorDecorationType
 - https://code.visualstudio.com/api/references/vscode-api#TextEditor
 - https://code.visualstudio.com/api/references/vscode-api#TextEditorDecorationType
-
-[github](https://github.com/PrimeTimeTran)
-[Google](https://www.google.com)
-[Wikipedia](https://en.wikipedia.org/wiki/Quantopian)
-[[ownership|Span]]
+- [github](https://github.com/PrimeTimeTran)
+- [Google](https://www.google.com)
+- [Wikipedia](https://en.wikipedia.org/wiki/Quantopian)
+- [[ownership|Span]]

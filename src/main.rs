@@ -6,11 +6,11 @@ pub fn fooo() {
 	let spam = bar;
 
 	if spam == "100" {
-		let go = "hi";
+		let _go = "hi";
 		println!("Hi spam")
 	}
 
-	let ham = spam;
+	let _ham = spam;
 }
 
 pub fn main() {
@@ -21,9 +21,9 @@ pub fn main() {
 	let spam = bar;
 
 	if spam == "100" {
-		let go = "hi";
+		let _go = "hi";
 		println!("Hi spam")
 	}
 
-	let ham = spam;
+	let _ham = spam;
 }

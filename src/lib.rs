@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 // https://doc.rust-lang.org/rustc/lints/levels.html
 // #![allow(warnings)] // Silences all warnings
 // #![allow(unused_imports)] // Silences unused imports

@@ -31,14 +31,12 @@ use syn::parse::Parser;
 //
 // Trait used internally to efficiently test whether the next token matches
 // a specific syntax element without consuming it.
-use syn::parse::Peek;
 
 // -----------------------------------------------------------------------------
 // syn::parse::discouraged::AnyDelimiter
 //
 // Matches any delimiter (`()`, `[]`, `{}`) during parsing.
 // Rarely needed; intended for advanced parsing scenarios.
-use syn::parse::discouraged::AnyDelimiter;
 
 // -----------------------------------------------------------------------------
 // syn::parse::discouraged::Speculative
@@ -66,14 +64,12 @@ use syn::token::Token;
 //
 // Read-only traversal of an AST.
 // Ideal for semantic analysis, indexing, and collecting information.
-use syn::visit::Visit;
 
 // -----------------------------------------------------------------------------
 // syn::visit_mut::VisitMut
 //
 // Mutable traversal of an AST.
 // Used for refactoring, rewriting, and transforming syntax in place.
-use syn::visit_mut::VisitMut;
 
 // use syn::ext::IdentExt;
 // use syn::fold::Fold;

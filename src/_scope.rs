@@ -1,6 +1,5 @@
 use crate::ir::*;
-use std::{collections::HashMap, path::PathBuf};
-use syn::{Ident, Result, Token, visit::Visit};
+use std::collections::HashMap;
 
 // pub struct Scope {
 //     pub id: ScopeId,
@@ -39,21 +38,17 @@ pub struct SemanticWorkspace {
 	pub packages_by_name: HashMap<String, SymId>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum ScopeKind {
 	Workspace,
 	Package,
 	Module,
+	#[default]
 	File,
 	Type,
 	Impl,
 	Function,
 	Block,
-}
-impl Default for ScopeKind {
-	fn default() -> Self {
-		ScopeKind::File
-	}
 }
 // #[derive(Clone, Debug, Default)]
 // pub struct ScopedWorkspace {

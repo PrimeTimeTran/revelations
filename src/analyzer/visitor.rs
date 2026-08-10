@@ -1,13 +1,7 @@
 use crate::{analyzer::*, ir::*};
 use quote::ToTokens;
-use regex_syntax::ast::Ast;
-use std::{
-	collections::HashMap,
-	fs::read_to_string,
-	path::{Path, PathBuf},
-};
 use syn::{
-	File, Ident,
+	Ident,
 	spanned::Spanned,
 	visit::{self, Visit},
 	visit_mut::{self, VisitMut},
@@ -285,78 +279,78 @@ impl RustVisitMutator {
 	}
 }
 impl VisitMut for RustVisitMutator {
-	fn visit_pat_mut(&mut self, i: &mut syn::Pat) {}
-	fn visit_attributes_mut(&mut self, i: &mut Vec<syn::Attribute>) {}
-	fn visit_attribute_mut(&mut self, i: &mut syn::Attribute) {}
-	fn visit_return_type_mut(&mut self, i: &mut syn::ReturnType) {}
-	fn visit_expr_closure_mut(&mut self, i: &mut syn::ExprClosure) {}
-	fn visit_expr_call_mut(&mut self, i: &mut syn::ExprCall) {}
-	fn visit_named_arg_mut(&mut self, i: &mut syn::NamedArg) {}
-	fn visit_block_mut(&mut self, i: &mut syn::Block) {}
-	fn visit_bound_lifetimes_mut(&mut self, i: &mut syn::BoundLifetimes) {}
-	fn visit_data_enum_mut(&mut self, i: &mut syn::DataEnum) {}
-	fn visit_data_mut(&mut self, i: &mut syn::Data) {}
-	fn visit_data_struct_mut(&mut self, i: &mut syn::DataStruct) {}
-	fn visit_data_union_mut(&mut self, i: &mut syn::DataUnion) {}
-	fn visit_expr_assign_mut(&mut self, i: &mut syn::ExprAssign) {}
-	fn visit_expr_block_mut(&mut self, i: &mut syn::ExprBlock) {}
-	fn visit_expr_field_mut(&mut self, i: &mut syn::ExprField) {}
-	fn visit_expr_group_mut(&mut self, i: &mut syn::ExprGroup) {}
-	fn visit_expr_if_mut(&mut self, i: &mut syn::ExprIf) {}
-	fn visit_expr_index_mut(&mut self, i: &mut syn::ExprIndex) {}
-	fn visit_expr_mut(&mut self, i: &mut syn::Expr) {}
-	fn visit_field_mut(&mut self, i: &mut syn::Field) {}
-	fn visit_field_pat_mut(&mut self, i: &mut syn::FieldPat) {}
-	fn visit_field_value_mut(&mut self, i: &mut syn::FieldValue) {}
-	fn visit_fields_mut(&mut self, i: &mut syn::Fields) {}
-	fn visit_fields_named_mut(&mut self, i: &mut syn::FieldsNamed) {}
-	fn visit_fields_unnamed_mut(&mut self, i: &mut syn::FieldsUnnamed) {}
-	fn visit_file_mut(&mut self, node: &mut syn::File) {}
-	fn visit_generic_argument_mut(&mut self, i: &mut syn::GenericArgument) {}
-	fn visit_generic_param_mut(&mut self, i: &mut syn::GenericParam) {}
-	fn visit_generics_mut(&mut self, i: &mut syn::Generics) {}
-	fn visit_ident_mut(&mut self, i: &mut proc_macro2::Ident) {}
-	fn visit_impl_item_const_mut(&mut self, i: &mut syn::ImplItemConst) {}
-	fn visit_impl_item_fn_mut(&mut self, i: &mut syn::ImplItemFn) {}
-	fn visit_impl_item_macro_mut(&mut self, i: &mut syn::ImplItemMacro) {}
-	fn visit_impl_item_mut(&mut self, i: &mut syn::ImplItem) {}
-	fn visit_impl_item_type_mut(&mut self, i: &mut syn::ImplItemType) {}
-	fn visit_index_mut(&mut self, i: &mut syn::Index) {}
-	fn visit_item_enum_mut(&mut self, i: &mut syn::ItemEnum) {}
-	fn visit_item_fn_mut(&mut self, node: &mut syn::ItemFn) {}
-	fn visit_item_impl_mut(&mut self, i: &mut syn::ItemImpl) {}
-	fn visit_item_macro_mut(&mut self, i: &mut syn::ItemMacro) {}
-	fn visit_item_mod_mut(&mut self, i: &mut syn::ItemMod) {}
-	fn visit_item_mut(&mut self, i: &mut syn::Item) {}
-	fn visit_item_static_mut(&mut self, i: &mut syn::ItemStatic) {}
-	fn visit_item_struct_mut(&mut self, node: &mut syn::ItemStruct) {}
-	fn visit_item_trait_alias_mut(&mut self, i: &mut syn::ItemTraitAlias) {}
-	fn visit_item_trait_mut(&mut self, i: &mut syn::ItemTrait) {}
-	fn visit_item_type_mut(&mut self, i: &mut syn::ItemType) {}
-	fn visit_item_use_mut(&mut self, i: &mut syn::ItemUse) {}
-	fn visit_lifetime_mut(&mut self, i: &mut syn::Lifetime) {}
-	fn visit_lifetime_param_mut(&mut self, i: &mut syn::LifetimeParam) {}
-	fn visit_local_init_mut(&mut self, i: &mut syn::LocalInit) {}
-	fn visit_local_mut(&mut self, i: &mut syn::Local) {}
+	fn visit_pat_mut(&mut self, _i: &mut syn::Pat) {}
+	fn visit_attributes_mut(&mut self, _i: &mut Vec<syn::Attribute>) {}
+	fn visit_attribute_mut(&mut self, _i: &mut syn::Attribute) {}
+	fn visit_return_type_mut(&mut self, _i: &mut syn::ReturnType) {}
+	fn visit_expr_closure_mut(&mut self, _i: &mut syn::ExprClosure) {}
+	fn visit_expr_call_mut(&mut self, _i: &mut syn::ExprCall) {}
+	fn visit_named_arg_mut(&mut self, _i: &mut syn::NamedArg) {}
+	fn visit_block_mut(&mut self, _i: &mut syn::Block) {}
+	fn visit_bound_lifetimes_mut(&mut self, _i: &mut syn::BoundLifetimes) {}
+	fn visit_data_enum_mut(&mut self, _i: &mut syn::DataEnum) {}
+	fn visit_data_mut(&mut self, _i: &mut syn::Data) {}
+	fn visit_data_struct_mut(&mut self, _i: &mut syn::DataStruct) {}
+	fn visit_data_union_mut(&mut self, _i: &mut syn::DataUnion) {}
+	fn visit_expr_assign_mut(&mut self, _i: &mut syn::ExprAssign) {}
+	fn visit_expr_block_mut(&mut self, _i: &mut syn::ExprBlock) {}
+	fn visit_expr_field_mut(&mut self, _i: &mut syn::ExprField) {}
+	fn visit_expr_group_mut(&mut self, _i: &mut syn::ExprGroup) {}
+	fn visit_expr_if_mut(&mut self, _i: &mut syn::ExprIf) {}
+	fn visit_expr_index_mut(&mut self, _i: &mut syn::ExprIndex) {}
+	fn visit_expr_mut(&mut self, _i: &mut syn::Expr) {}
+	fn visit_field_mut(&mut self, _i: &mut syn::Field) {}
+	fn visit_field_pat_mut(&mut self, _i: &mut syn::FieldPat) {}
+	fn visit_field_value_mut(&mut self, _i: &mut syn::FieldValue) {}
+	fn visit_fields_mut(&mut self, _i: &mut syn::Fields) {}
+	fn visit_fields_named_mut(&mut self, _i: &mut syn::FieldsNamed) {}
+	fn visit_fields_unnamed_mut(&mut self, _i: &mut syn::FieldsUnnamed) {}
+	fn visit_file_mut(&mut self, _node: &mut syn::File) {}
+	fn visit_generic_argument_mut(&mut self, _i: &mut syn::GenericArgument) {}
+	fn visit_generic_param_mut(&mut self, _i: &mut syn::GenericParam) {}
+	fn visit_generics_mut(&mut self, _i: &mut syn::Generics) {}
+	fn visit_ident_mut(&mut self, _i: &mut proc_macro2::Ident) {}
+	fn visit_impl_item_const_mut(&mut self, _i: &mut syn::ImplItemConst) {}
+	fn visit_impl_item_fn_mut(&mut self, _i: &mut syn::ImplItemFn) {}
+	fn visit_impl_item_macro_mut(&mut self, _i: &mut syn::ImplItemMacro) {}
+	fn visit_impl_item_mut(&mut self, _i: &mut syn::ImplItem) {}
+	fn visit_impl_item_type_mut(&mut self, _i: &mut syn::ImplItemType) {}
+	fn visit_index_mut(&mut self, _i: &mut syn::Index) {}
+	fn visit_item_enum_mut(&mut self, _i: &mut syn::ItemEnum) {}
+	fn visit_item_fn_mut(&mut self, _node: &mut syn::ItemFn) {}
+	fn visit_item_impl_mut(&mut self, _i: &mut syn::ItemImpl) {}
+	fn visit_item_macro_mut(&mut self, _i: &mut syn::ItemMacro) {}
+	fn visit_item_mod_mut(&mut self, _i: &mut syn::ItemMod) {}
+	fn visit_item_mut(&mut self, _i: &mut syn::Item) {}
+	fn visit_item_static_mut(&mut self, _i: &mut syn::ItemStatic) {}
+	fn visit_item_struct_mut(&mut self, _node: &mut syn::ItemStruct) {}
+	fn visit_item_trait_alias_mut(&mut self, _i: &mut syn::ItemTraitAlias) {}
+	fn visit_item_trait_mut(&mut self, _i: &mut syn::ItemTrait) {}
+	fn visit_item_type_mut(&mut self, _i: &mut syn::ItemType) {}
+	fn visit_item_use_mut(&mut self, _i: &mut syn::ItemUse) {}
+	fn visit_lifetime_mut(&mut self, _i: &mut syn::Lifetime) {}
+	fn visit_lifetime_param_mut(&mut self, _i: &mut syn::LifetimeParam) {}
+	fn visit_local_init_mut(&mut self, _i: &mut syn::LocalInit) {}
+	fn visit_local_mut(&mut self, _i: &mut syn::Local) {}
 	fn visit_parenthesized_generic_arguments_mut(
 		&mut self,
-		i: &mut syn::ParenthesizedGenericArguments,
+		_i: &mut syn::ParenthesizedGenericArguments,
 	) {
 	}
-	fn visit_label_mut(&mut self, i: &mut syn::Label) {}
-	fn visit_type_mut(&mut self, i: &mut syn::Type) {}
-	fn visit_trait_item_type_mut(&mut self, i: &mut syn::TraitItemType) {}
-	fn visit_trait_item_fn_mut(&mut self, i: &mut syn::TraitItemFn) {}
-	fn visit_trait_bound_mut(&mut self, i: &mut syn::TraitBound) {}
-	fn visit_trait_item_const_mut(&mut self, i: &mut syn::TraitItemConst) {}
-	fn visit_trait_item_macro_mut(&mut self, i: &mut syn::TraitItemMacro) {}
-	fn visit_predicate_lifetime_mut(&mut self, i: &mut syn::PredicateLifetime) {}
-	fn visit_signature_mut(&mut self, i: &mut syn::Signature) {}
-	fn visit_stmt_mut(&mut self, i: &mut syn::Stmt) {}
-	fn visit_trait_item_mut(&mut self, i: &mut syn::TraitItem) {}
-	fn visit_type_impl_trait_mut(&mut self, i: &mut syn::TypeImplTrait) {}
-	fn visit_use_path_mut(&mut self, i: &mut syn::UsePath) {}
-	fn visit_visibility_mut(&mut self, i: &mut syn::Visibility) {}
+	fn visit_label_mut(&mut self, _i: &mut syn::Label) {}
+	fn visit_type_mut(&mut self, _i: &mut syn::Type) {}
+	fn visit_trait_item_type_mut(&mut self, _i: &mut syn::TraitItemType) {}
+	fn visit_trait_item_fn_mut(&mut self, _i: &mut syn::TraitItemFn) {}
+	fn visit_trait_bound_mut(&mut self, _i: &mut syn::TraitBound) {}
+	fn visit_trait_item_const_mut(&mut self, _i: &mut syn::TraitItemConst) {}
+	fn visit_trait_item_macro_mut(&mut self, _i: &mut syn::TraitItemMacro) {}
+	fn visit_predicate_lifetime_mut(&mut self, _i: &mut syn::PredicateLifetime) {}
+	fn visit_signature_mut(&mut self, _i: &mut syn::Signature) {}
+	fn visit_stmt_mut(&mut self, _i: &mut syn::Stmt) {}
+	fn visit_trait_item_mut(&mut self, _i: &mut syn::TraitItem) {}
+	fn visit_type_impl_trait_mut(&mut self, _i: &mut syn::TypeImplTrait) {}
+	fn visit_use_path_mut(&mut self, _i: &mut syn::UsePath) {}
+	fn visit_visibility_mut(&mut self, _i: &mut syn::Visibility) {}
 	fn visit_abi_mut(&mut self, i: &mut syn::Abi) {
 		visit_mut::visit_abi_mut(self, i);
 	}
@@ -642,7 +636,7 @@ impl VisitMut for RustVisitMutator {
 	fn visit_stmt_macro_mut(&mut self, i: &mut syn::StmtMacro) {
 		visit_mut::visit_stmt_macro_mut(self, i);
 	}
-	fn visit_token_stream_mut(&mut self, i: &mut proc_macro2::TokenStream) {}
+	fn visit_token_stream_mut(&mut self, _i: &mut proc_macro2::TokenStream) {}
 	fn visit_type_array_mut(&mut self, i: &mut syn::TypeArray) {
 		visit_mut::visit_type_array_mut(self, i);
 	}

@@ -1,11 +1,8 @@
-use std::{collections::HashMap, fs::read_to_string, path::PathBuf};
+use std::path::PathBuf;
 
-use crate::{_config::AnalyzeConfig, analyzer::*, ir::*};
-use quote::ToTokens;
-use syn::{
-	File,
-	visit::{self, Visit},
-};
+use serde::{Deserialize, Serialize};
+
+use crate::analyzer::*;
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
@@ -13,12 +10,13 @@ pub struct AnalysisResult {
 	pub metrics: AnalysisMetrics,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AnalysisMetrics {
 	pub workspace: WorkspaceMetrics,
 	pub packages: Vec<PackageMetrics>,
 	pub modules: Vec<ModuleMetrics>,
 	pub files: Vec<FileMetrics>,
+	pub functions: Vec<FunctionMetrics>,
 }
 impl AnalysisMetrics {
 	pub fn new(workspace: WorkspaceMetrics) -> Self {
@@ -27,6 +25,7 @@ impl AnalysisMetrics {
 			packages: Vec::new(),
 			modules: Vec::new(),
 			files: Vec::new(),
+			functions: Vec::new(),
 		}
 	}
 	pub fn with_packages(mut self, packages: Vec<PackageMetrics>) -> Self {
@@ -42,8 +41,19 @@ impl AnalysisMetrics {
 		self
 	}
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WorkspaceMetrics {
+	pub files: usize,
+	pub packages: usize,
+	pub symbols: usize,
+	pub functions: usize,
+	pub types: usize,
+	pub imports: usize,
+	// pub config: AnalyzeConfig,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct FunctionMetrics {
 	pub files: usize,
 	pub packages: usize,
 	pub symbols: usize,
@@ -61,13 +71,13 @@ impl WorkspaceMetrics {
 			files: workspace.files.len(),
 			packages: workspace.packages.len(),
 			symbols: workspace.symbols.len(),
-			functions: 0,
+			functions: workspace.functions.len(),
 			types: 0,
 			imports: 0,
 		}
 	}
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PackageMetrics {
 	pub name: String,
 	pub symbols: usize,
@@ -95,7 +105,7 @@ impl PackageMetrics {
 		}
 	}
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ModuleMetrics {
 	pub name: String,
 	pub files: usize,
@@ -114,7 +124,7 @@ impl ModuleMetrics {
 		}
 	}
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct FileMetrics {
 	pub path: PathBuf,
 	pub name: String,

@@ -152,9 +152,8 @@ Core architecture for semantic workflow paradigms to be realized in other tools.
 - [[wikilinks#^block-id]] Link to block
 - [[#Heading in same file]] Same-file heading link
 
-![[wikilinks]] Embed full file
-![[wikilinks#Heading]] Embed section
-![[image.png]] Embed image
-![[image.png|300]] Embed image with width
-
-[[share-manifest-assets]]
+- ![[wikilinks]] Embed full file
+- ![[wikilinks#Heading]] Embed section
+- ![[image.png]] Embed image
+- ![[image.png|300]] Embed image with width
+- [[share-manifest-assets]]

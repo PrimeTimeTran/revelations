@@ -61,7 +61,7 @@ impl Sym {
 		}
 	}
 	// 1. Top down workspace init pkg
-	pub fn package(parent: SymId, name: impl Into<String>) -> Self {
+	pub fn package(_parent: SymId, name: impl Into<String>) -> Self {
 		Self {
 			id: 0,
 			name: name.into(),
@@ -74,7 +74,7 @@ impl Sym {
 		}
 	}
 	// 1. Top down pkgs init module
-	pub fn module(parent: SymId, name: impl Into<String>) -> Self {
+	pub fn module(_parent: SymId, name: impl Into<String>) -> Self {
 		Self {
 			id: 0,
 			name: name.into(),
@@ -87,7 +87,7 @@ impl Sym {
 		}
 	}
 	// 1. Top down workspace/pkg/module init files
-	pub fn file(parent: SymId, name: impl Into<String>) -> Self {
+	pub fn file(_parent: SymId, name: impl Into<String>) -> Self {
 		Self {
 			id: 0,
 			name: name.into(),

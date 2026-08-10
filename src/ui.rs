@@ -169,7 +169,7 @@ pub fn render_impl(i: &syn::ItemImpl, config: &Config, indent: &str) -> String {
 	if !methods.is_empty() {
 		output.push_str(&format!("{}{} METHODS:\n", content_indent, mark));
 		output.push_str(&methods.join("\n"));
-		output.push_str("\n");
+		output.push('\n');
 	}
 	output.push_str(&format!("{}}}", indent));
 	output

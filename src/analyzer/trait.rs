@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{analyzer::*, ir::*};
+use crate::analyzer::*;
 
 pub struct Analyze {
 	pub target: AnalysisTarget,
