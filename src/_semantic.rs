@@ -241,6 +241,7 @@
 // Your current `Symbol + Scope + Container` model is actually the right place to start because it can feed all of these without locking you into one feature.
 use crate::{_scope::*, ir::*};
 use std::collections::HashMap;
+// use crate::prelude::*;
 
 pub struct SemanticWorkspace {
 	pub symbols: HashMap<SymId, Sym>,
