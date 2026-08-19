@@ -23,40 +23,71 @@ impl Analyzer for RustAnalyzer {
 	}
 }
 impl RustAnalyzer {
-	// 1. Find every Cargo package.
-	// 2. For each package, call analyze_package().
-	fn analyze_workspace(
+	/// Analyze an entire Rust workspace.
+	///
+	/// 1. Walk the workspace filesystem.
+	/// 2. Find Rust source files.
+	/// 3. Analyze each file.
+	/// 4. Populate the workspace symbol graph.
+	pub fn analyze_workspace(
 		&self,
 		path: PathBuf,
 		options: &AnalyzerOptions,
 	) -> Result<Workspace, AnalysisError> {
 		let mut workspace = Workspace::new();
+
 		for entry in walkdir::WalkDir::new(&path) {
 			let entry = entry.map_err(|e| AnalysisError::Parse(e.to_string()))?;
 			let file = entry.path();
+
 			if file.extension().and_then(|x| x.to_str()) != Some("rs") {
 				continue;
 			}
-			let (source, ast) = self.build_source(path.clone());
-			let file_id = workspace.add_symbol(
-				Sym::file(
-					0,
-					file
-						.file_name()
-						.unwrap_or_default()
-						.to_string_lossy()
-						.to_string(),
-				),
-				Some(workspace.root),
-			);
-			workspace.files.push(file_id);
-			let mut visitor = RustVisitor::new(options, &mut workspace, file_id, &source);
-			visitor.visit_file(&ast.unwrap());
+
+			self.analyze_file_into(file, options, &mut workspace)?;
 		}
-		self.workspace_metrics(&workspace);
-		self.package_metrics(&workspace);
-		self.file_metrics(&workspace);
+
 		Ok(workspace)
+	}
+
+	/// Analyze a single Rust file and return a workspace containing it.
+	pub fn analyze_file(
+		&self,
+		path: PathBuf,
+		options: &AnalyzerOptions,
+	) -> Result<Workspace, AnalysisError> {
+		let mut workspace = Workspace::new();
+
+		self.analyze_file_into(&path, options, &mut workspace)?;
+
+		Ok(workspace)
+	}
+
+	/// Analyze a file and add its symbols to an existing workspace.
+	fn analyze_file_into(
+		&self,
+		path: &Path,
+		options: &AnalyzerOptions,
+		workspace: &mut Workspace,
+	) -> Result<SymId, AnalysisError> {
+		let source = std::fs::read_to_string(path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
+
+		let ast = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
+
+		let name = path.file_name().unwrap_or_default().to_string_lossy();
+
+		let file_id = workspace.add_symbol(
+			Sym::file(SymId::default(), Some(workspace.root), name, ScopeId(0)),
+			Some(workspace.root),
+		);
+
+		workspace.files.push(file_id);
+
+		let mut visitor = RustVisitor::new(options, workspace, file_id, &source);
+
+		visitor.visit_file(&ast);
+
+		Ok(file_id)
 	}
 	// 1. Read Cargo.toml.
 	// 2. Discover src/lib.rs, src/main.rs, tests/, examples/, etc.
@@ -68,74 +99,6 @@ impl RustAnalyzer {
 	// 2. Parse with syn.
 	// 3. Visit AST.
 	// 4. Populate symbols.
-	fn analyze_file(
-		&self,
-		path: PathBuf,
-		options: &AnalyzerOptions,
-	) -> Result<Workspace, AnalysisError> {
-		let (source, ast) = self.build_source(path.clone());
-		self.build_workspace(options, path.clone());
-		let mut workspace = Workspace::new();
-		let file_id = workspace.add_symbol(
-			Sym::file(
-				0,
-				path
-					.file_name()
-					.unwrap_or_default()
-					.to_string_lossy()
-					.to_string(),
-			),
-			Some(workspace.root),
-		);
-		workspace.files.push(file_id);
-		let mut visitor: RustVisitor<'_> = RustVisitor::new(options, &mut workspace, file_id, &source);
-		visitor.visit_file(&ast.unwrap());
-		Ok(workspace)
-	}
-	// fn analyze_file(
-	//     &self,
-	//     path: PathBuf,
-	//     options: &AnalyzerOptions,
-	//     subject: Option<&AnalyzeSubject>,
-	// ) -> Result<Workspace, AnalysisError> {
-	//     let (source, ast) = self.build_source(path.clone());
-	//     let syntax_tree = ast.map_err(|e| AnalysisError::Parse(e.to_string()))?;
-
-	//     let mut workspace = Workspace::new();
-	//     let file_id = workspace.add_symbol(
-	//         Symbol::file(
-	//             0,
-	//             path.file_name()
-	//                 .unwrap_or_default()
-	//                 .to_string_lossy()
-	//                 .to_string(),
-	//         ),
-	//         Some(workspace.root),
-	//     );
-	//     workspace.files.push(file_id);
-
-	//     // 1. Run your standard AST visitor for workspace symbols/metrics
-	//     let mut visitor = RustVisitor::new(options, &mut workspace, file_id, &source);
-	//     visitor.visit_file(&syntax_tree);
-
-	//     // 2. Conditionally run your OwnershipVisitor if a target subject was clicked/provided
-	//     if let Some(sub) = subject {
-	//         let mut ownership_visitor = OwnershipVisitor {
-	//             target_ident: &sub.identifier,
-	//             target_offset: sub.offset,
-	//             related_spans: Vec::new(),
-	//         };
-
-	//         // Walk the AST specifically for ownership/reference tracing
-	//         use syn::visit::Visit;
-	//         ownership_visitor.visit_file(&syntax_tree);
-
-	//         // TODO: Map ownership_visitor.related_spans to line numbers
-	//         // and attach them to your workspace or return results!
-	//     }
-
-	//     Ok(workspace)
-	// }
 }
 impl RustAnalyzer {
 	// Todo:
@@ -144,24 +107,20 @@ impl RustAnalyzer {
 	fn build_workspace(
 		&self,
 		options: &AnalyzerOptions,
-		path: PathBuf,
+		path: &Path,
 	) -> Result<Workspace, AnalysisError> {
-		let (source, ast) = self.build_source(path.clone());
 		let mut workspace = Workspace::new();
-		let file_id = workspace.add_symbol(
-			Sym::file(
-				0,
-				path
-					.file_name()
-					.unwrap_or_default()
-					.to_string_lossy()
-					.to_string(),
-			),
-			Some(workspace.root),
-		);
-		workspace.files.push(file_id);
+
+		let file_id = self.add_file(&mut workspace, path)?;
+
+		let source = std::fs::read_to_string(path).map_err(|e| AnalysisError::Parse(e.to_string()))?;
+
+		let ast = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()))?;
+
 		let mut visitor = RustVisitor::new(options, &mut workspace, file_id, &source);
-		visitor.visit_file(&ast.unwrap());
+
+		visitor.visit_file(&ast);
+
 		Ok(workspace)
 	}
 	fn build_source(&self, path: PathBuf) -> (String, Result<File, AnalysisError>) {
@@ -172,11 +131,27 @@ impl RustAnalyzer {
 		let ast = syn::parse_file(&source).map_err(|e| AnalysisError::Parse(e.to_string()));
 		(source, ast)
 	}
+	fn add_file(&self, workspace: &mut Workspace, path: &Path) -> Result<SymId, AnalysisError> {
+		let name = path
+			.file_name()
+			.ok_or_else(|| AnalysisError::Parse(format!("Path has no filename: {}", path.display())))?
+			.to_string_lossy()
+			.into_owned();
+
+		let file_id = workspace.add_symbol(
+			Sym::file(SymId::default(), Some(workspace.root), name, ScopeId(0)),
+			Some(workspace.root),
+		);
+
+		workspace.files.push(file_id);
+
+		Ok(file_id)
+	}
 }
 impl RustAnalyzer {
 	pub fn workspace_metrics(&self, workspace: &Workspace) -> WorkspaceMetrics {
-		let _metrics = workspace.metrics();
 		let mut metrics = WorkspaceMetrics::new(workspace);
+
 		for symbol in &workspace.symbols {
 			match &symbol.kind {
 				SymbolKind::Function(_) => {
@@ -191,6 +166,7 @@ impl RustAnalyzer {
 				_ => {}
 			}
 		}
+
 		metrics
 	}
 	pub fn package_metrics(&self, workspace: &Workspace) -> Vec<PackageMetrics> {
@@ -198,116 +174,172 @@ impl RustAnalyzer {
 			.packages
 			.iter()
 			.map(|package_id| {
-				let package = &workspace.symbols[*package_id as usize];
+				let package = workspace.get(*package_id);
+
 				let mut metrics = PackageMetrics::new(package.name.clone());
+
 				self.collect_package_metrics(workspace, *package_id, &mut metrics);
+
 				metrics
 			})
 			.collect()
 	}
+
 	fn collect_package_metrics(
 		&self,
 		workspace: &Workspace,
 		symbol_id: SymId,
 		metrics: &mut PackageMetrics,
 	) {
-		let symbol = &workspace.symbols[symbol_id as usize];
+		let symbol = workspace.get(symbol_id);
+
 		match &symbol.kind {
 			SymbolKind::Module(ModuleKind::Dependency) => {
 				metrics.files += 1;
 			}
+
 			SymbolKind::Function(_) => {
 				metrics.functions += 1;
 				metrics.symbols += 1;
 			}
+
 			SymbolKind::Type(_) => {
 				metrics.types += 1;
 				metrics.symbols += 1;
 			}
+
 			_ => {
 				metrics.symbols += 1;
 			}
 		}
-		for child in &symbol.children {
-			self.collect_package_metrics(workspace, *child, metrics);
+
+		for child_id in &symbol.children {
+			self.collect_package_metrics(workspace, *child_id, metrics);
 		}
 	}
+
 	pub fn file_metrics(&self, workspace: &Workspace) -> Vec<FileMetrics> {
 		workspace
 			.files
 			.iter()
 			.map(|file_id| {
-				let file = &workspace.symbols[*file_id as usize];
+				let file = workspace.get(*file_id);
+
 				let mut metrics = FileMetrics::new(PathBuf::from(&file.name));
-				for child in &file.children {
-					let symbol = &workspace.symbols[*child as usize];
+
+				for child_id in &file.children {
+					let symbol = workspace.get(*child_id);
+
 					metrics.symbols += 1;
+
 					match &symbol.kind {
 						SymbolKind::Function(_) => {
 							metrics.functions += 1;
 						}
+
 						SymbolKind::Import(_) => {
 							metrics.imports += 1;
 						}
+
 						SymbolKind::Type(_) => {
 							metrics.types += 1;
 						}
+
 						_ => {}
 					}
 				}
+
 				metrics
 			})
 			.collect()
 	}
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash)]
 pub struct Workspace {
 	pub root: SymId,
+
+	/// All symbols in the workspace.
 	pub symbols: Vec<Sym>,
+
+	/// Indexes into `symbols`.
 	pub files: Vec<SymId>,
 	pub packages: Vec<SymId>,
 	pub modules: Vec<SymId>,
 	pub functions: Vec<SymId>,
+
 	pub config: AnalyzeConfig,
+
 	next_sym_id: SymId,
 }
+
 impl Default for Workspace {
 	fn default() -> Self {
 		Self::new()
 	}
 }
+
 impl Workspace {
 	pub fn new() -> Self {
 		let config = AnalyzeConfig::default();
 		let mut workspace = Self {
 			config,
-			root: 0,
+			root: SymId(0),
 			symbols: Vec::new(),
+			files: Vec::new(),
 			packages: Vec::new(),
 			modules: Vec::new(),
 			functions: Vec::new(),
-			files: Vec::new(),
-			next_sym_id: 0,
+			next_sym_id: SymId(0),
 		};
-		let root = workspace.add_symbol(Sym::workspace(1, "workspace"), None);
+
+		let root = workspace.add_symbol(Sym::workspace(SymId(0), "workspace", ScopeId(0)), None);
+
 		workspace.root = root;
+
 		workspace
 	}
 	pub fn get(&self, id: SymId) -> &Sym {
-		&self.symbols[id as usize]
+		&self.symbols[id.0 as usize]
 	}
+
 	pub fn get_mut(&mut self, id: SymId) -> &mut Sym {
-		&mut self.symbols[id as usize]
+		&mut self.symbols[id.0 as usize]
 	}
+
 	pub fn add_symbol(&mut self, mut symbol: Sym, parent: Option<SymId>) -> SymId {
-		let id = self.next_sym_id;
-		self.next_sym_id += 1;
+		let id = self.alloc_sym_id();
+
 		symbol.id = id;
+
+		self.insert_symbol(symbol, parent);
+
+		id
+	}
+
+	pub fn add_symbol_with_id(&mut self, symbol: Sym, parent: Option<SymId>) -> SymId {
+		let id = symbol.id;
+
+		// TODO: validate uniqueness.
+
+		self.insert_symbol(symbol, parent);
+
+		id
+	}
+
+	fn insert_symbol(&mut self, symbol: Sym, parent: Option<SymId>) {
+		let id = symbol.id;
+
 		if let Some(parent_id) = parent {
-			self.symbols[parent_id as usize].children.push(id);
+			self.get_mut(parent_id).children.push(id);
 		}
+
 		self.symbols.push(symbol);
+	}
+
+	fn alloc_sym_id(&mut self) -> SymId {
+		let id = self.next_sym_id;
+		self.next_sym_id = SymId(id.0 + 1);
 		id
 	}
 }
@@ -350,7 +382,7 @@ impl Workspace {
 		metrics
 	}
 	fn collect_metrics(&self, id: SymId, metrics: &mut WorkspaceMetrics) {
-		let symbol = &self.symbols[id as usize];
+		let symbol = &self.get(id);
 		match &symbol.kind {
 			SymbolKind::Function(_) => {
 				metrics.functions += 1;
@@ -374,15 +406,16 @@ impl Workspace {
 		}
 	}
 	pub fn package_metrics(&self, id: SymId) -> PackageMetrics {
-		let package = &self.symbols[id as usize];
+		// let package = &self.symbols[id as usize];
+		let package = &self.get(id);
 		let mut metrics = PackageMetrics::new(package.name.clone());
 		self.collect_package_metrics(id, &mut metrics);
 		metrics
 	}
 	fn collect_package_metrics(&self, id: SymId, metrics: &mut PackageMetrics) {
-		let symbol = &self.symbols[id as usize];
+		let sym = &self.get(id);
 		metrics.symbols += 1;
-		match &symbol.kind {
+		match &sym.kind {
 			SymbolKind::File(_) => {
 				metrics.files += 1;
 			}
@@ -407,21 +440,21 @@ impl Workspace {
 			_ => {}
 		}
 
-		for child in &symbol.children {
+		for child in &sym.children {
 			self.collect_package_metrics(*child, metrics);
 		}
 	}
 
 	pub fn module_metrics(&self, id: SymId) -> ModuleMetrics {
-		let module = &self.symbols[id as usize];
+		let module = &self.get(id);
 		let mut metrics = ModuleMetrics::new(module.name.clone());
 		self.collect_module_metrics(id, &mut metrics);
 		metrics
 	}
 	fn collect_module_metrics(&self, id: SymId, metrics: &mut ModuleMetrics) {
-		let symbol = &self.symbols[id as usize];
+		let sym = &self.get(id);
 		metrics.symbols += 1;
-		match &symbol.kind {
+		match &sym.kind {
 			SymbolKind::Module(ModuleKind::Internal) => {
 				metrics.files += 1;
 			}
@@ -433,24 +466,23 @@ impl Workspace {
 			}
 			_ => {}
 		}
-		for child in &symbol.children {
+		for child in &sym.children {
 			self.collect_module_metrics(*child, metrics);
 		}
 	}
 
 	pub fn file_metrics(&self, id: SymId) -> FileMetrics {
-		let file = &self.symbols[id as usize];
+		let file = &self.get(id);
 		let path = PathBuf::from(&file.name);
 		let mut metrics = FileMetrics::new(path);
 		self.collect_file_metrics(id, &mut metrics);
 		metrics
 	}
 	fn collect_file_metrics(&self, id: SymId, metrics: &mut FileMetrics) {
-		let symbol = &self.symbols[id as usize];
-
+		let sym = &self.get(id);
 		metrics.symbols += 1;
 
-		match &symbol.kind {
+		match &sym.kind {
 			SymbolKind::Function(_) => {
 				metrics.functions += 1;
 			}
@@ -463,7 +495,7 @@ impl Workspace {
 			_ => {}
 		}
 
-		for child in &symbol.children {
+		for child in &sym.children {
 			self.collect_file_metrics(*child, metrics);
 		}
 	}

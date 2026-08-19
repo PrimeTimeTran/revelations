@@ -1,124 +1,119 @@
-use crate::_scope::ScopeId;
+use std::collections::HashMap;
 
-pub type SymId = u32;
-// #[derive(Debug, Clone)]
-// pub struct Symbol {
-//     pub id: SymId,
-//     pub name: String,
-//     pub kind: SymbolKind,
-//     pub location: Option<SymLocation>,
-//     pub visibility: Visibility,
-// pub params: Option<Vec<(String, String)>>,
-//     pub return_type: Option<String>,
-//     pub children: Vec<SymId>,
-// }
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SymId(pub u32);
+impl Default for SymId {
+	fn default() -> Self {
+		Self(u32::MAX)
+	}
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Sym {
 	pub id: SymId,
 	pub name: String,
 	pub kind: SymbolKind,
-	pub owner: SymId,
+	pub owner: Option<SymId>,
 	pub location: Option<SymLocation>,
 	pub visibility: Visibility,
 	pub children: Vec<SymId>,
 	pub scope: ScopeId,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ScopeId(pub u32);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Scope {
+	pub id: ScopeId,
+
+	/// The symbol that created this scope.
+	pub owner: Option<SymId>,
+
+	/// Names directly declared here.
+	pub symbols: HashMap<String, SymId>,
+
+	pub parent: Option<ScopeId>,
+}
 impl Sym {
 	pub fn new(
+		id: SymId,
 		name: impl Into<String>,
 		kind: SymbolKind,
-		owner: SymId,
-		// scope,
+		owner: Option<SymId>,
+		scope: ScopeId,
 		visibility: Visibility,
 		location: Option<SymLocation>,
 	) -> Self {
 		Self {
-			id: 0,
+			id,
 			name: name.into(),
 			kind,
-			scope: 0,
 			owner,
 			location,
 			visibility,
-			// params: None,
-			// return_type: None,
 			children: Vec::new(),
+			scope,
 		}
 	}
-}
-impl Sym {
-	// 1. Top down init workspace analysis
-	pub fn workspace(owner: SymId, name: impl Into<String>) -> Self {
+
+	/// Initialize the workspace root symbol.
+	pub fn workspace(id: SymId, name: impl Into<String>, scope: ScopeId) -> Self {
 		Self {
-			id: 0,
+			id,
 			name: name.into(),
-			owner,
-			scope: 0,
+			owner: None,
+			scope,
 			location: Some(SymLocation::default()),
 			kind: SymbolKind::Root(RootKind::Workspace),
 			visibility: Visibility::Public,
 			children: Vec::new(),
 		}
 	}
-	// 1. Top down workspace init pkg
-	pub fn package(_parent: SymId, name: impl Into<String>) -> Self {
+
+	/// Initialize a package belonging to `owner`.
+	pub fn package(id: SymId, owner: Option<SymId>, name: impl Into<String>, scope: ScopeId) -> Self {
 		Self {
-			id: 0,
+			id,
 			name: name.into(),
-			owner: 0,
-			scope: 0,
+			owner,
+			scope,
 			location: Some(SymLocation::default()),
 			kind: SymbolKind::Package(PackageKind::Crate),
 			visibility: Visibility::Public,
 			children: Vec::new(),
 		}
 	}
-	// 1. Top down pkgs init module
-	pub fn module(_parent: SymId, name: impl Into<String>) -> Self {
+
+	/// Initialize a module belonging to `owner`.
+	pub fn module(id: SymId, owner: Option<SymId>, name: impl Into<String>, scope: ScopeId) -> Self {
 		Self {
-			id: 0,
-			name: name.into(),
-			owner: 0,
-			scope: 0,
-			location: Some(SymLocation::default()),
-			kind: SymbolKind::Module(ModuleKind::Dependency),
-			visibility: Visibility::Public,
-			children: Vec::new(),
-		}
-	}
-	// 1. Top down workspace/pkg/module init files
-	pub fn file(_parent: SymId, name: impl Into<String>) -> Self {
-		Self {
-			id: 0,
-			name: name.into(),
-			owner: 0,
-			scope: 0,
-			location: Some(SymLocation::default()),
-			kind: SymbolKind::Module(ModuleKind::Dependency),
-			visibility: Visibility::Public,
-			children: Vec::new(),
-		}
-	}
-	pub fn function(
-		owner: SymId,
-		name: impl Into<String>,
-		kind: FunctionKind,
-		visibility: Visibility,
-	) -> Self {
-		// 1. Top down pkgs init files
-		Self {
-			id: 0,
+			id,
 			name: name.into(),
 			owner,
-			scope: 0,
+			scope,
 			location: Some(SymLocation::default()),
-			kind: SymbolKind::Function(kind),
-			visibility,
+			kind: SymbolKind::Module(ModuleKind::Dependency),
+			visibility: Visibility::Public,
+			children: Vec::new(),
+		}
+	}
+
+	/// Initialize a file belonging to `owner`.
+	pub fn file(id: SymId, owner: Option<SymId>, name: impl Into<String>, scope: ScopeId) -> Self {
+		Self {
+			id,
+			name: name.into(),
+			owner,
+			scope,
+			location: Some(SymLocation::default()),
+			kind: SymbolKind::Module(ModuleKind::Dependency),
+			visibility: Visibility::Public,
 			children: Vec::new(),
 		}
 	}
 }
-#[derive(Clone, Debug, Default)]
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct SymLocation {
 	pub file: SymId,
 	pub start: usize,
@@ -130,7 +125,7 @@ pub enum SymbolOrigin {
 	Intrinsic,  // language/runtime/std provided
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum SymbolKind {
 	Root(RootKind),
 	Workspace(WorkspaceKind),
@@ -146,20 +141,20 @@ pub enum SymbolKind {
 		trait_name: Option<String>,
 	},
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum RootKind {
 	Workspace,
 	Crate,
 	File,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum FileKind {
 	Workspace,
 	Crate,
 	File,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum Language {
 	Rust,
 	JavaScript,
@@ -173,7 +168,7 @@ pub enum Language {
 	Unknown,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum Visibility {
 	Public,
 	Private,
@@ -181,7 +176,7 @@ pub enum Visibility {
 	Internal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum TypeKind {
 	Module(ModuleKind),
 	Struct,
@@ -193,28 +188,28 @@ pub enum TypeKind {
 	Impl,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum ImplKind {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum WorkspaceKind {
 	Intrinsic,
 	Dependency,
 	Internal,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum ModuleKind {
 	Intrinsic,
 	Dependency,
 	Internal,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PackageKind {
 	Crate,
 	Workspace,
 	Dependency,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum FunctionKind {
 	Free,
 	Method,
@@ -222,15 +217,14 @@ pub enum FunctionKind {
 	Lambda,
 	TraitMethod,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum VariableKind {
 	Let,
 	Const,
 	Var,
 	Field,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Signature {
 	pub params: Vec<(String, String)>,
 	pub return_type: String,

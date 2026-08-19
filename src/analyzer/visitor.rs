@@ -57,131 +57,124 @@ impl<'a> RustVisitor<'a> {
 }
 impl<'ast> Visit<'ast> for RustVisitor<'_> {
 	fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
-		self.add_symbol(Sym {
-			id: 0,
-			scope: 0,
-			owner: 0,
-			name: node.ident.to_string(),
-			location: Some(self.location(node.span())),
-			kind: SymbolKind::Type(TypeKind::Struct),
-			visibility: Visibility::Private,
-			// params: None,
-			// return_type: None,
-			children: Vec::new(),
-		});
+		self.add_symbol(Sym::new(
+			SymId::default(),
+			node.ident.to_string(),
+			SymbolKind::Type(TypeKind::Struct),
+			Some(self.file),
+			ScopeId(0),
+			Visibility::Private,
+			Some(self.location(node.span())),
+		));
+
 		visit::visit_item_struct(self, node);
 	}
+
 	fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
-		self.add_symbol(Sym {
-			id: 0,
-			scope: 0,
-			owner: 0,
-			name: node.ident.to_string(),
-			location: Some(self.location(node.span())),
-			kind: SymbolKind::Type(TypeKind::Trait),
-			visibility: match &node.vis {
+		self.add_symbol(Sym::new(
+			SymId::default(),
+			node.ident.to_string(),
+			SymbolKind::Type(TypeKind::Trait),
+			Some(self.file),
+			ScopeId(0),
+			match &node.vis {
 				syn::Visibility::Public(_) => Visibility::Public,
 				_ => Visibility::Private,
 			},
-			// params: None,
-			// return_type: None,
-			children: Vec::new(),
-		});
+			Some(self.location(node.span())),
+		));
+
 		visit::visit_item_trait(self, node);
 	}
+
 	fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-		self.add_symbol(Sym {
-			id: 0,
-			scope: 0,
-			owner: 0,
-			location: Some(self.location(node.span())),
-			name: node.sig.ident.to_string(),
-			kind: SymbolKind::Function(FunctionKind::Method),
-			visibility: match &node.vis {
+		self.add_symbol(Sym::new(
+			SymId::default(),
+			node.sig.ident.to_string(),
+			SymbolKind::Function(FunctionKind::Method),
+			self.current_impl,
+			ScopeId(0),
+			match &node.vis {
 				syn::Visibility::Public(_) => Visibility::Public,
 				_ => Visibility::Private,
 			},
-			// params: None,
-			// return_type: Some(node.sig.output.to_token_stream().to_string()),
-			children: Vec::new(),
-		});
+			Some(self.location(node.span())),
+		));
+
 		visit::visit_impl_item_fn(self, node);
 	}
 
 	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-		self.add_symbol(Sym {
-			id: 0,
-			scope: 0,
-			owner: 0,
-			name: node.sig.ident.to_string(),
-			location: Some(self.location(node.span())),
-			kind: SymbolKind::Function(FunctionKind::Free),
-			visibility: match &node.vis {
+		self.add_symbol(Sym::new(
+			SymId::default(),
+			node.sig.ident.to_string(),
+			SymbolKind::Function(FunctionKind::Free),
+			Some(self.file),
+			ScopeId(0),
+			match &node.vis {
 				syn::Visibility::Public(_) => Visibility::Public,
 				_ => Visibility::Private,
 			},
-			// params: None,
-			// return_type: Some(node.sig.output.to_token_stream().to_string()),
-			children: Vec::new(),
-		});
+			Some(self.location(node.span())),
+		));
 
 		visit::visit_item_fn(self, node);
 	}
+
 	fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
-		self.add_symbol(Sym {
-			id: 0,
-			scope: 0,
-			owner: 0,
-			location: Some(self.location(node.span())),
-			name: node.ident.to_string(),
-			kind: SymbolKind::Type(TypeKind::Enum),
-			visibility: visibility(&node.vis),
-			// params: None,
-			// return_type: None,
-			children: Vec::new(),
-		});
+		self.add_symbol(Sym::new(
+			SymId::default(),
+			node.ident.to_string(),
+			SymbolKind::Type(TypeKind::Enum),
+			Some(self.file),
+			ScopeId(0),
+			visibility(&node.vis),
+			Some(self.location(node.span())),
+		));
+
 		visit::visit_item_enum(self, node);
 	}
 
 	fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
 		let name = node.to_token_stream().to_string();
-		self.add_symbol(Sym {
-			id: 0,
-			scope: 0,
-			owner: 0,
+
+		self.add_symbol(Sym::new(
+			SymId::default(),
 			name,
-			location: Some(self.location(node.span())),
-			kind: SymbolKind::Import(ModuleKind::Dependency),
-			visibility: Visibility::Private,
-			// params: None,
-			// return_type: None,
-			children: Vec::new(),
-		});
+			SymbolKind::Import(ModuleKind::Dependency),
+			Some(self.file),
+			ScopeId(0),
+			Visibility::Private,
+			Some(self.location(node.span())),
+		));
+
 		visit::visit_item_use(self, node);
 	}
+
 	fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
 		let name = node.self_ty.to_token_stream().to_string();
-		let impl_id = self.add_symbol(Sym {
-			id: 0,
-			scope: 0,
-			owner: 0,
-			name: format!("impl {}", name),
-			location: Some(self.location(node.span())),
-			kind: SymbolKind::Implementation {
+
+		let impl_id = self.add_symbol(Sym::new(
+			SymId::default(),
+			format!("impl {}", name),
+			SymbolKind::Implementation {
 				target_type: name.clone(),
 				trait_name: node
 					.trait_
 					.as_ref()
 					.map(|(path, _)| path.to_token_stream().to_string()),
 			},
-			visibility: Visibility::Private,
-			// params: None,
-			// return_type: None,
-			children: Vec::new(),
-		});
+			Some(self.file),
+			ScopeId(0),
+			Visibility::Private,
+			Some(self.location(node.span())),
+		));
+
 		self.current_impl = Some(impl_id);
 		self.scope_stack.push(impl_id);
+
 		visit::visit_item_impl(self, node);
+
 		self.scope_stack.pop();
 		self.current_impl = None;
 	}

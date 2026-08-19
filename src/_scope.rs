@@ -1,34 +1,6 @@
 use crate::ir::*;
 use std::collections::HashMap;
 
-// pub struct Scope {
-//     pub id: ScopeId,
-//     pub owner: SymId,
-//     pub name: String,
-//     pub kind: ScopeKind,
-//     pub children: Vec<SymId>,
-// }
-
-pub type ScopeId = u32;
-#[derive(Clone, Debug, Default)]
-pub struct Scope {
-	pub id: ScopeId,
-	// The symbol that created this scope
-	pub owner: SymId,
-	// Names directly declared here
-	pub symbols: HashMap<String, SymId>,
-	pub parent: Option<ScopeId>,
-}
-
-// impl Scope {
-//     pub fn new(name: String, owner: SymId, kind: ScopeKind) -> Self {
-//         Self {
-//             id: 0,
-//             owner,
-//             symbols: vec![],
-//         }
-//     }
-// }
 pub struct SemanticWorkspace {
 	pub symbols: HashMap<SymId, Sym>,
 	pub scopes: HashMap<ScopeId, Scope>,

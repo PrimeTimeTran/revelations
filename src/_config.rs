@@ -2,10 +2,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::analyzer::ownership::*;
-use crate::analyzer::*;
+use crate::analyzer::{ownership::*, *};
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Clone, Debug, Deserialize, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeConfig {
 	pub level: LogLevel,
@@ -138,7 +137,7 @@ impl AnalyzeConfig {
 		self.level = val.into();
 	}
 }
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, Hash)]
 #[serde(untagged)]
 pub enum LogLevel {
 	Named(String),
