@@ -302,7 +302,6 @@ impl Workspace {
 	pub fn get(&self, id: SymId) -> &Sym {
 		&self.symbols[id.0 as usize]
 	}
-
 	pub fn get_mut(&mut self, id: SymId) -> &mut Sym {
 		&mut self.symbols[id.0 as usize]
 	}

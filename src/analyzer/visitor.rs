@@ -1,5 +1,6 @@
 use crate::{analyzer::*, ir::*};
 use quote::ToTokens;
+use quote::quote;
 use syn::{
 	Ident,
 	spanned::Spanned,
@@ -31,6 +32,9 @@ impl<'a> RustVisitor<'a> {
 			current_impl: None,
 		}
 	}
+	fn current_symbol(&self) -> SymId {
+		*self.scope_stack.last().unwrap_or(&self.file)
+	}
 	fn location(&self, span: proc_macro2::Span) -> SymLocation {
 		SymLocation {
 			file: self.file,
@@ -54,39 +58,110 @@ impl<'a> RustVisitor<'a> {
 	fn pop_scope(&mut self) {
 		self.scope_stack.pop();
 	}
+	fn type_names(ty: &syn::Type, names: &mut Vec<String>) {
+		match ty {
+			syn::Type::Path(path) => {
+				if let Some(segment) = path.path.segments.last() {
+					names.push(segment.ident.to_string());
+
+					if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+						for arg in &args.args {
+							if let syn::GenericArgument::Type(ty) = arg {
+								Self::type_names(ty, names);
+							}
+						}
+					}
+				}
+			}
+
+			_ => {}
+		}
+	}
+	fn referenced_type(ty: &syn::Type) -> Option<String> {
+		let mut names = Vec::new();
+		Self::type_names(ty, &mut names);
+
+		names
+			.into_iter()
+			.rev()
+			.find(|name| !matches!(name.as_str(), "Vec" | "Option" | "String" | "PathBuf"))
+	}
+	fn resolve_type(&self, ty: &syn::Type) -> Option<SymId> {
+		match ty {
+			syn::Type::Path(type_path) => {
+				let segment = type_path.path.segments.last()?;
+
+				// Vec<T>, Option<T>, etc.
+				if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+					for arg in &args.args {
+						if let syn::GenericArgument::Type(inner) = arg {
+							if let Some(id) = self.resolve_type(inner) {
+								return Some(id);
+							}
+						}
+					}
+				}
+
+				let name = segment.ident.to_string();
+
+				self
+					.workspace
+					.symbols
+					.iter()
+					.find(|symbol| symbol.name == name)
+					.map(|symbol| symbol.id)
+			}
+
+			_ => None,
+		}
+	}
 }
+
 impl<'ast> Visit<'ast> for RustVisitor<'_> {
+	fn visit_field(&mut self, field: &'ast syn::Field) {
+		let name = field
+			.ident
+			.as_ref()
+			.map(ToString::to_string)
+			.unwrap_or_else(|| "_".into());
+
+		let field_id = self.add_symbol(Sym::new(
+			SymId::default(),
+			name,
+			SymbolKind::Field,
+			Some(self.current_scope()),
+			ScopeId(0),
+			Visibility::Private,
+			Some(self.location(field.span())),
+		));
+
+		if let Some(name) = Self::referenced_type(&field.ty) {
+			self
+				.workspace
+				.get_mut(field_id)
+				.references
+				.push(TypeReference { name });
+		}
+
+		visit::visit_field(self, field);
+	}
 	fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
-		self.add_symbol(Sym::new(
+		let id = self.add_symbol(Sym::new(
 			SymId::default(),
 			node.ident.to_string(),
 			SymbolKind::Type(TypeKind::Struct),
-			Some(self.file),
+			Some(self.current_scope()),
 			ScopeId(0),
 			Visibility::Private,
 			Some(self.location(node.span())),
 		));
 
+		self.scope_stack.push(id);
+
 		visit::visit_item_struct(self, node);
+
+		self.scope_stack.pop();
 	}
-
-	fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
-		self.add_symbol(Sym::new(
-			SymId::default(),
-			node.ident.to_string(),
-			SymbolKind::Type(TypeKind::Trait),
-			Some(self.file),
-			ScopeId(0),
-			match &node.vis {
-				syn::Visibility::Public(_) => Visibility::Public,
-				_ => Visibility::Private,
-			},
-			Some(self.location(node.span())),
-		));
-
-		visit::visit_item_trait(self, node);
-	}
-
 	fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
 		self.add_symbol(Sym::new(
 			SymId::default(),
@@ -103,7 +178,6 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
 
 		visit::visit_impl_item_fn(self, node);
 	}
-
 	fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
 		self.add_symbol(Sym::new(
 			SymId::default(),
@@ -120,7 +194,6 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
 
 		visit::visit_item_fn(self, node);
 	}
-
 	fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
 		self.add_symbol(Sym::new(
 			SymId::default(),
@@ -134,7 +207,6 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
 
 		visit::visit_item_enum(self, node);
 	}
-
 	fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
 		let name = node.to_token_stream().to_string();
 
@@ -150,7 +222,6 @@ impl<'ast> Visit<'ast> for RustVisitor<'_> {
 
 		visit::visit_item_use(self, node);
 	}
-
 	fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
 		let name = node.self_ty.to_token_stream().to_string();
 
